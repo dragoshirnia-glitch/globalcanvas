@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 
 const TOTAL_BLOCKS = 1_000_000;
-const SOLD_BLOCKS = 743_218;
+const SOLD_BLOCKS = 0;
 
 const PALETTE = {
   bg: "#03010A",
