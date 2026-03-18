@@ -1,6 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
+
+const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY || "pk_test_placeholder");
 
 const TOTAL_BLOCKS = 1_000_000;
 const SOLD_BLOCKS = 0;
@@ -27,6 +31,70 @@ const BLOCK_SIZE = 10;
 const GRID_BLOCKS = 1000;
 const CANVAS_SIZE = BLOCK_SIZE * GRID_BLOCKS;
 
+// Stripe Payment Form Component
+function CheckoutForm({ selectedBlock, onSuccess, onCancel }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+
+    setLoading(true);
+    setError(null);
+
+    const { error: submitError } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: `${window.location.origin}?block=${selectedBlock?.x}_${selectedBlock?.y}&purchased=true`,
+      },
+    });
+
+    if (submitError) {
+      setError(submitError.message);
+      setLoading(false);
+    } else {
+      onSuccess();
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <PaymentElement />
+      {error && (
+        <div style={{ color: "#EF4444", fontSize: 12, marginTop: 8, padding: "8px 12px", background: "rgba(239,68,68,0.1)", borderRadius: 6 }}>
+          {error}
+        </div>
+      )}
+      <button
+        type="submit"
+        disabled={!stripe || loading}
+        style={{
+          width: "100%", padding: 14, marginTop: 16,
+          background: loading ? "#6B6585" : "linear-gradient(135deg,#7C3AED,#A855F7)",
+          border: "none", borderRadius: 10, color: "#fff",
+          fontWeight: 800, fontSize: 16, cursor: loading ? "not-allowed" : "pointer",
+          fontFamily: "monospace", transition: "all 0.2s"
+        }}>
+        {loading ? "⏳ Processing..." : "🔒 Pay €1.00"}
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        style={{
+          width: "100%", padding: 10, marginTop: 8,
+          background: "transparent", border: "1px solid #1E1A35",
+          borderRadius: 8, color: "#6B6585",
+          fontSize: 13, cursor: "pointer", fontFamily: "monospace"
+        }}>
+        Cancel
+      </button>
+    </form>
+  );
+}
+
 export default function GlobalCanvas() {
   const [soldCount, setSoldCount] = useState(SOLD_BLOCKS);
   const [feedItems, setFeedItems] = useState([]);
@@ -34,9 +102,12 @@ export default function GlobalCanvas() {
   const [selectedBlock, setSelectedBlock] = useState(null);
   const [purchased, setPurchased] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [clientSecret, setClientSecret] = useState(null);
+  const [paymentStep, setPaymentStep] = useState("confirm"); // confirm | pay | success
   const canvasRef = useRef(null);
   const purchasedBlocksRef = useRef([]);
 
+  // Draw canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -44,34 +115,25 @@ export default function GlobalCanvas() {
     canvas.width = CANVAS_SIZE;
     canvas.height = CANVAS_SIZE;
 
-    // Black background
     ctx.fillStyle = "#03010A";
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-    // Draw all blocks as dark squares with visible borders
     for (let row = 0; row < GRID_BLOCKS; row++) {
       for (let col = 0; col < GRID_BLOCKS; col++) {
-        const x = col * BLOCK_SIZE;
-        const y = row * BLOCK_SIZE;
         ctx.fillStyle = "#0A0818";
-        ctx.fillRect(x + 1, y + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+        ctx.fillRect(col * BLOCK_SIZE + 1, row * BLOCK_SIZE + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
       }
     }
 
-    // Grid lines
     ctx.strokeStyle = "#1E1A35";
     ctx.lineWidth = 1;
     for (let i = 0; i <= CANVAS_SIZE; i += BLOCK_SIZE) {
       ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, CANVAS_SIZE); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(CANVAS_SIZE, i); ctx.stroke();
     }
-
-    purchasedBlocksRef.current.forEach(block => {
-      ctx.fillStyle = block.color;
-      ctx.fillRect(block.col * BLOCK_SIZE + 1, block.row * BLOCK_SIZE + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
-    });
   }, []);
 
+  // Live feed
   useEffect(() => {
     const timer = setInterval(() => {
       setFeedItems(prev => [{
@@ -93,11 +155,41 @@ export default function GlobalCanvas() {
     const col = Math.floor(((e.clientX - rect.left) * canvas.width / rect.width) / BLOCK_SIZE);
     const row = Math.floor(((e.clientY - rect.top) * canvas.height / rect.height) / BLOCK_SIZE);
     setSelectedBlock({ x: col, y: row, col, row });
+    setPaymentStep("confirm");
+    setClientSecret(null);
     setShowPurchase(true);
   };
 
-  const handlePurchase = () => {
+  const openModal = () => {
+    const c = Math.floor(Math.random() * GRID_BLOCKS);
+    const r = Math.floor(Math.random() * GRID_BLOCKS);
+    setSelectedBlock({ x: c, y: r, col: c, row: r });
+    setPaymentStep("confirm");
+    setClientSecret(null);
+    setShowPurchase(true);
+  };
+
+  const handleProceedToPayment = async () => {
+    try {
+      const response = await fetch("/api/create-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blockX: selectedBlock.x, blockY: selectedBlock.y }),
+      });
+      const data = await response.json();
+      if (data.clientSecret) {
+        setClientSecret(data.clientSecret);
+        setPaymentStep("pay");
+      }
+    } catch (err) {
+      console.error("Payment error:", err);
+    }
+  };
+
+  const handlePaymentSuccess = () => {
     setPurchased(true);
+    setPaymentStep("success");
+
     const canvas = canvasRef.current;
     if (canvas && selectedBlock) {
       const ctx = canvas.getContext("2d");
@@ -107,7 +199,14 @@ export default function GlobalCanvas() {
       purchasedBlocksRef.current.push({ col: selectedBlock.col, row: selectedBlock.row, color });
       setSoldCount(c => c + 1);
     }
-    setTimeout(() => { setShowPurchase(false); setPurchased(false); setSelectedBlock(null); }, 3000);
+  };
+
+  const closeModal = () => {
+    setShowPurchase(false);
+    setPurchased(false);
+    setSelectedBlock(null);
+    setClientSecret(null);
+    setPaymentStep("confirm");
   };
 
   const remaining = TOTAL_BLOCKS - soldCount;
@@ -122,12 +221,13 @@ export default function GlobalCanvas() {
         @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
         @keyframes slideIn { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
         .btn:hover { opacity:0.85; transform:translateY(-1px); }
+        .StripeElement { background: #03010A; padding: 12px; border-radius: 8px; border: 1px solid #1E1A35; margin-top: 16px; }
       `}</style>
 
       {/* HEADER */}
       <div style={{ background:"#0D0B1A", borderBottom:"1px solid #1E1A35", padding:"0 20px", height:60, display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:50 }}>
         <div style={{ fontWeight:800, fontSize:20 }}>🌐 Global<span style={{ color:"#A855F7" }}>Canvas</span></div>
-        <button className="btn" onClick={() => { const c=Math.floor(Math.random()*GRID_BLOCKS); const r=Math.floor(Math.random()*GRID_BLOCKS); setSelectedBlock({x:c,y:r,col:c,row:r}); setShowPurchase(true); }}
+        <button className="btn" onClick={openModal}
           style={{ background:"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:8, padding:"8px 18px", color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer", transition:"all 0.2s" }}>
           Buy Block — €1
         </button>
@@ -165,8 +265,8 @@ export default function GlobalCanvas() {
               <span style={{ fontWeight:700, fontSize:13 }}>🌍 Live Canvas — 1,000 × 1,000 blocks</span>
               <div style={{ display:"flex", gap:6 }}>
                 {[
-                  { label:"🔍+ Zoom In", action:() => setZoom(z => Math.min(+(z+0.5).toFixed(1), 8)) },
-                  { label:"🔍- Zoom Out", action:() => setZoom(z => Math.max(+(z-0.5).toFixed(1), 0.2)) },
+                  { label:"🔍+ Zoom In", action:() => setZoom(z => Math.min(+(z+0.5).toFixed(1),8)) },
+                  { label:"🔍- Zoom Out", action:() => setZoom(z => Math.max(+(z-0.5).toFixed(1),0.2)) },
                   { label:"Reset", action:() => setZoom(1) },
                   { label:"⛶ Full Screen", action:() => { const el=document.documentElement; if(!document.fullscreenElement){el.requestFullscreen();}else{document.exitFullscreen();} }},
                 ].map((b,i) => (
@@ -174,11 +274,9 @@ export default function GlobalCanvas() {
                 ))}
               </div>
             </div>
-
             <div style={{ overflow:"auto", maxHeight:520, background:"#03010A" }}>
               <canvas ref={canvasRef} style={{ display:"block", cursor:"crosshair", width:canvasDisplaySize+"px", height:canvasDisplaySize+"px", imageRendering:"pixelated" }} onClick={handleCanvasClick} />
             </div>
-
             <div style={{ padding:"10px 16px", borderTop:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <span style={{ fontSize:11, color:"#6B6585" }}>👆 Click any block to purchase · Zoom in to see individual blocks</span>
               <span style={{ fontSize:11, color:"#A855F7", fontWeight:700 }}>Zoom: {Math.round(zoom*100)}%</span>
@@ -204,8 +302,6 @@ export default function GlobalCanvas() {
 
         {/* SIDEBAR */}
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-
-          {/* Live Feed */}
           <div style={{ background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:12, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", borderBottom:"1px solid #1E1A35", display:"flex", alignItems:"center", gap:8 }}>
               <div style={{ width:7, height:7, background:"#10B981", borderRadius:"50%", animation:"pulse 1s infinite" }} />
@@ -226,19 +322,17 @@ export default function GlobalCanvas() {
             </div>
           </div>
 
-          {/* CTA */}
           <div style={{ background:"linear-gradient(135deg,rgba(124,58,237,0.2),rgba(6,182,212,0.1))", border:"1px solid #7C3AED", borderRadius:12, padding:20, textAlign:"center" }}>
             <div style={{ fontSize:32, marginBottom:8, animation:"float 3s ease-in-out infinite" }}>🎨</div>
             <div style={{ fontWeight:800, fontSize:15, marginBottom:6 }}>Own Your Piece</div>
             <div style={{ fontSize:11, color:"#6B6585", marginBottom:16, lineHeight:1.5 }}>Leave your mark on the world's largest collaborative artwork. Just €1 — forever.</div>
-            <button className="btn" onClick={() => { const c=Math.floor(Math.random()*GRID_BLOCKS); const r=Math.floor(Math.random()*GRID_BLOCKS); setSelectedBlock({x:c,y:r,col:c,row:r}); setShowPurchase(true); }}
+            <button className="btn" onClick={openModal}
               style={{ width:"100%", padding:12, background:"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:8, color:"#fff", fontWeight:700, fontSize:14, cursor:"pointer", transition:"all 0.2s" }}>
               Buy a Block — €1
             </button>
             <div style={{ fontSize:10, color:"#6B6585", marginTop:8 }}>💳 Stripe · Secure · Instant</div>
           </div>
 
-          {/* Leaderboard */}
           <div style={{ background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:12, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", borderBottom:"1px solid #1E1A35" }}>
               <span style={{ fontSize:12, fontWeight:700 }}>🏆 Top Collectors</span>
@@ -261,18 +355,20 @@ export default function GlobalCanvas() {
         </div>
       </div>
 
-      {/* MODAL */}
+      {/* PURCHASE MODAL */}
       {showPurchase && (
         <div style={{ position:"fixed", inset:0, background:"rgba(3,1,10,0.85)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
-          onClick={e => { if(e.target===e.currentTarget && !purchased) setShowPurchase(false); }}>
-          <div style={{ background:"#0D0B1A", border:"1px solid #7C3AED", borderRadius:20, padding:32, maxWidth:420, width:"100%", position:"relative", boxShadow:"0 0 60px rgba(124,58,237,0.3)" }}>
-            {!purchased ? (
+          onClick={e => { if(e.target===e.currentTarget && paymentStep!=="pay") closeModal(); }}>
+          <div style={{ background:"#0D0B1A", border:"1px solid #7C3AED", borderRadius:20, padding:32, maxWidth:440, width:"100%", position:"relative", boxShadow:"0 0 60px rgba(124,58,237,0.3)" }}>
+
+            {/* STEP 1 — Confirm */}
+            {paymentStep === "confirm" && (
               <>
-                <button onClick={() => setShowPurchase(false)} style={{ position:"absolute", top:16, right:16, background:"transparent", border:"none", color:"#6B6585", fontSize:22, cursor:"pointer" }}>×</button>
+                <button onClick={closeModal} style={{ position:"absolute", top:16, right:16, background:"transparent", border:"none", color:"#6B6585", fontSize:22, cursor:"pointer" }}>×</button>
                 <div style={{ textAlign:"center", marginBottom:24 }}>
                   <div style={{ fontSize:40, marginBottom:10, animation:"float 3s infinite" }}>🎨</div>
                   <div style={{ fontWeight:800, fontSize:20, marginBottom:4 }}>Claim Your Block</div>
-                  <div style={{ color:"#6B6585", fontSize:12 }}>Block <span style={{ color:"#06B6D4", fontFamily:"monospace" }}>[{selectedBlock?.x}, {selectedBlock?.y}]</span> · Available</div>
+                  <div style={{ color:"#6B6585", fontSize:12 }}>Block <span style={{ color:"#06B6D4" }}>[{selectedBlock?.x}, {selectedBlock?.y}]</span> · Available</div>
                 </div>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20 }}>
                   {[["Price","€ 1.00"],["Location","["+selectedBlock?.x+","+selectedBlock?.y+"]"],["Ownership","Permanent"],["Customizable","Yes"]].map(([l,v],i) => (
@@ -285,26 +381,69 @@ export default function GlobalCanvas() {
                 <div style={{ background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.2)", borderRadius:8, padding:"10px 14px", marginBottom:20 }}>
                   <span style={{ fontSize:11, color:"#FCA5A5", fontWeight:600 }}>🔴 {Math.floor(Math.random()*15+3)} people viewing this block right now</span>
                 </div>
-                <button className="btn" onClick={handlePurchase} style={{ width:"100%", padding:14, background:"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:10, color:"#fff", fontWeight:800, fontSize:16, cursor:"pointer", transition:"all 0.2s" }}>
-                  🔒 Buy Block — €1.00
+                <button className="btn" onClick={handleProceedToPayment}
+                  style={{ width:"100%", padding:14, background:"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:10, color:"#fff", fontWeight:800, fontSize:16, cursor:"pointer", transition:"all 0.2s" }}>
+                  🔒 Continue to Payment — €1.00
                 </button>
                 <div style={{ textAlign:"center", marginTop:10, fontSize:10, color:"#6B6585" }}>Powered by Stripe · SSL Encrypted · Instant ownership</div>
               </>
-            ) : (
+            )}
+
+            {/* STEP 2 — Stripe Payment */}
+            {paymentStep === "pay" && clientSecret && (
+              <>
+                <div style={{ marginBottom:20 }}>
+                  <div style={{ fontWeight:800, fontSize:18, marginBottom:4 }}>💳 Complete Payment</div>
+                  <div style={{ color:"#6B6585", fontSize:12 }}>Block [{selectedBlock?.x}, {selectedBlock?.y}] · €1.00</div>
+                </div>
+                <Elements stripe={stripePromise} options={{
+                  clientSecret,
+                  appearance: {
+                    theme: "night",
+                    variables: {
+                      colorPrimary: "#7C3AED",
+                      colorBackground: "#03010A",
+                      colorText: "#F0ECFF",
+                      colorDanger: "#EF4444",
+                      fontFamily: "monospace",
+                      borderRadius: "8px",
+                    }
+                  }
+                }}>
+                  <CheckoutForm
+                    selectedBlock={selectedBlock}
+                    onSuccess={handlePaymentSuccess}
+                    onCancel={() => setPaymentStep("confirm")}
+                  />
+                </Elements>
+              </>
+            )}
+
+            {/* STEP 2 — Loading payment */}
+            {paymentStep === "pay" && !clientSecret && (
+              <div style={{ textAlign:"center", padding:"40px 0" }}>
+                <div style={{ fontSize:40, marginBottom:16, animation:"float 1s infinite" }}>⏳</div>
+                <div style={{ color:"#6B6585", fontSize:14 }}>Loading payment...</div>
+              </div>
+            )}
+
+            {/* STEP 3 — Success */}
+            {paymentStep === "success" && (
               <div style={{ textAlign:"center", padding:"20px 0" }}>
                 <div style={{ fontSize:56, marginBottom:12, animation:"float 1s infinite" }}>🎉</div>
                 <div style={{ fontWeight:800, fontSize:20, color:"#10B981", marginBottom:8 }}>You own Block [{selectedBlock?.x}, {selectedBlock?.y}]!</div>
-                <div style={{ color:"#6B6585", fontSize:12, lineHeight:1.6, marginBottom:20 }}>You are now permanently part of the world's largest collaborative digital artwork! Share it!</div>
-                <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap" }}>
+                <div style={{ color:"#6B6585", fontSize:12, lineHeight:1.6, marginBottom:20 }}>You are now permanently part of the world's largest collaborative digital artwork!</div>
+                <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap", marginBottom:16 }}>
                   <button onClick={() => window.open(`https://twitter.com/intent/tweet?text=I just bought Block [${selectedBlock?.x}, ${selectedBlock?.y}] on GlobalCanvas! Only €1! 🎨&url=https://www.globalcanvas.design`,'_blank')}
                     style={{ padding:"8px 14px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:8, color:"#A855F7", fontSize:12, cursor:"pointer", fontWeight:600 }}>𝕏 Twitter</button>
                   <button onClick={() => window.open(`https://www.facebook.com/sharer/sharer.php?u=https://www.globalcanvas.design`,'_blank')}
                     style={{ padding:"8px 14px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:8, color:"#A855F7", fontSize:12, cursor:"pointer", fontWeight:600 }}>📘 Facebook</button>
-                  <button onClick={() => { navigator.clipboard.writeText(`https://www.globalcanvas.design`); alert("Link copied! Paste it on Instagram! ✅"); }}
+                  <button onClick={() => { navigator.clipboard.writeText(`https://www.globalcanvas.design`); alert("Link copied! ✅"); }}
                     style={{ padding:"8px 14px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:8, color:"#A855F7", fontSize:12, cursor:"pointer", fontWeight:600 }}>📷 Instagram</button>
-                  <button onClick={() => { navigator.clipboard.writeText(`https://www.globalcanvas.design`); alert("Link copied! Paste it on TikTok! ✅"); }}
+                  <button onClick={() => { navigator.clipboard.writeText(`https://www.globalcanvas.design`); alert("Link copied! ✅"); }}
                     style={{ padding:"8px 14px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:8, color:"#A855F7", fontSize:12, cursor:"pointer", fontWeight:600 }}>🎵 TikTok</button>
                 </div>
+                <button onClick={closeModal} style={{ padding:"10px 24px", background:"transparent", border:"1px solid #1E1A35", borderRadius:8, color:"#6B6585", fontSize:13, cursor:"pointer", fontFamily:"monospace" }}>Close</button>
               </div>
             )}
           </div>
