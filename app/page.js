@@ -33,7 +33,7 @@ export default function GlobalCanvas() {
   const [customBlock, setCustomBlock] = useState(null);
   const [loading, setLoading] = useState(false);
   const [loadingBlocks, setLoadingBlocks] = useState(true);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(3);
   const [customColor, setCustomColor] = useState("#7C3AED");
   const [blockName, setBlockName] = useState("");
   const [blockLink, setBlockLink] = useState("");
@@ -277,7 +277,7 @@ export default function GlobalCanvas() {
                 {[
                   { label:"Zoom In", action:() => setZoom(z => Math.min(+(z+0.5).toFixed(1),8)) },
                   { label:"Zoom Out", action:() => setZoom(z => Math.max(+(z-0.5).toFixed(1),0.2)) },
-                  { label:"Reset", action:() => setZoom(1) },
+                  { label:"Reset", action:() => setZoom(3) },
                   { label:"Full Screen", action:() => { const el=document.documentElement; if(!document.fullscreenElement){el.requestFullscreen();}else{document.exitFullscreen();} }},
                 ].map((b,i) => (
                   <button key={i} onClick={b.action} className="btn" style={{ padding:"4px 10px", background:"transparent", border:"1px solid #1E1A35", borderRadius:4, color:"#6B6585", fontSize:11, cursor:"pointer", fontFamily:"inherit", transition:"all 0.2s" }}>{b.label}</button>
