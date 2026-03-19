@@ -5,23 +5,14 @@ import { useState, useEffect, useRef } from "react";
 const TOTAL_BLOCKS = 1_000_000;
 const SOLD_BLOCKS = 0;
 
-const PALETTE = {
-  bg: "#03010A",
-  surface: "#0D0B1A",
-  border: "#1E1A35",
-  accent: "#7C3AED",
-  accentBright: "#A855F7",
-  gold: "#F59E0B",
-  cyan: "#06B6D4",
-  green: "#10B981",
-  red: "#EF4444",
-  text: "#F0ECFF",
-  muted: "#6B6585",
-};
-
 const COUNTRY_FLAGS = ["🇺🇸","🇩🇪","🇫🇷","🇯🇵","🇧🇷","🇬🇧","🇨🇦","🇦🇺","🇮🇳","🇰🇷"];
 const USERNAMES = ["pixel_king","art3mis","neon_wolf","cosmic_dot","grid_ghost","voxel_queen","blocksmith","the_painter"];
-const BLOCK_COLORS = ["#7C3AED","#A855F7","#06B6D4","#10B981","#F59E0B","#EF4444","#3B82F6","#EC4899","#14B8A6","#F97316"];
+
+const PRESET_COLORS = [
+  "#7C3AED","#A855F7","#06B6D4","#10B981",
+  "#F59E0B","#EF4444","#3B82F6","#EC4899",
+  "#14B8A6","#F97316","#FFFFFF","#FFD700"
+];
 
 const BLOCK_SIZE = 10;
 const GRID_BLOCKS = 1000;
@@ -31,12 +22,20 @@ export default function GlobalCanvas() {
   const [soldCount, setSoldCount] = useState(SOLD_BLOCKS);
   const [feedItems, setFeedItems] = useState([]);
   const [showPurchase, setShowPurchase] = useState(false);
+  const [showCustomize, setShowCustomize] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState(null);
+  const [customBlock, setCustomBlock] = useState(null);
   const [loading, setLoading] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [selectedColor, setSelectedColor] = useState("#7C3AED");
+  const [customColor, setCustomColor] = useState("#7C3AED");
+  const [blockName, setBlockName] = useState("");
+  const [blockLink, setBlockLink] = useState("");
+  const [hoveredBlock, setHoveredBlock] = useState(null);
   const canvasRef = useRef(null);
-  const purchasedBlocksRef = useRef([]);
+  const ownedBlocksRef = useRef({});
 
+  // Draw canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -59,26 +58,22 @@ export default function GlobalCanvas() {
     }
   }, []);
 
+  // Check if returned from Stripe payment
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('success') === 'true') {
       const block = params.get('block');
       if (block) {
         const [x, y] = block.split('_').map(Number);
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const ctx = canvas.getContext("2d");
-          const color = BLOCK_COLORS[Math.floor(Math.random() * BLOCK_COLORS.length)];
-          ctx.fillStyle = color;
-          ctx.fillRect(x * BLOCK_SIZE + 1, y * BLOCK_SIZE + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
-          setSoldCount(c => c + 1);
-        }
+        setCustomBlock({ x, y });
+        setShowCustomize(true);
+        setSoldCount(c => c + 1);
       }
-      alert('🎉 Felicitări! Blocul tău a fost cumpărat cu succes!');
       window.history.replaceState({}, '', '/');
     }
   }, []);
 
+  // Live feed simulation
   useEffect(() => {
     const timer = setInterval(() => {
       setFeedItems(prev => [{
@@ -93,14 +88,51 @@ export default function GlobalCanvas() {
     return () => clearInterval(timer);
   }, []);
 
+  const colorBlock = (x, y, color, name, link) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = color;
+    ctx.fillRect(x * BLOCK_SIZE + 1, y * BLOCK_SIZE + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+    ownedBlocksRef.current[`${x}_${y}`] = { x, y, color, name, link };
+  };
+
+  const handleSaveCustomization = () => {
+    if (!customBlock) return;
+    const finalColor = customColor || selectedColor;
+    colorBlock(customBlock.x, customBlock.y, finalColor, blockName, blockLink);
+    setShowCustomize(false);
+    setCustomBlock(null);
+    setBlockName("");
+    setBlockLink("");
+    setSelectedColor("#7C3AED");
+    setCustomColor("#7C3AED");
+    alert("🎉 Blocul tău a fost personalizat și salvat pe canvas!");
+  };
+
   const handleCanvasClick = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const col = Math.floor(((e.clientX - rect.left) * canvas.width / rect.width) / BLOCK_SIZE);
     const row = Math.floor(((e.clientY - rect.top) * canvas.height / rect.height) / BLOCK_SIZE);
+    const key = `${col}_${row}`;
+    if (ownedBlocksRef.current[key]) {
+      const block = ownedBlocksRef.current[key];
+      alert(`Bloc [${col},${row}]\nProprietar: ${block.name || 'Anonim'}\nLink: ${block.link || 'N/A'}`);
+      return;
+    }
     setSelectedBlock({ x: col, y: row });
     setShowPurchase(true);
+  };
+
+  const handleCanvasHover = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const col = Math.floor(((e.clientX - rect.left) * canvas.width / rect.width) / BLOCK_SIZE);
+    const row = Math.floor(((e.clientY - rect.top) * canvas.height / rect.height) / BLOCK_SIZE);
+    setHoveredBlock({ x: col, y: row });
   };
 
   const openModal = () => {
@@ -126,7 +158,7 @@ export default function GlobalCanvas() {
         setLoading(false);
       }
     } catch (err) {
-      alert('Eroare de conectare: ' + err.message);
+      alert('Eroare: ' + err.message);
       setLoading(false);
     }
   };
@@ -136,15 +168,19 @@ export default function GlobalCanvas() {
   const canvasDisplaySize = Math.round(500 * zoom);
 
   return (
-    <div style={{ minHeight:"100vh", background:PALETTE.bg, color:PALETTE.text, fontFamily:"monospace" }}>
+    <div style={{ minHeight:"100vh", background:"#03010A", color:"#F0ECFF", fontFamily:"monospace" }}>
       <style>{`
         * { box-sizing:border-box; margin:0; padding:0; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
         @keyframes slideIn { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
         .btn:hover { opacity:0.85; transform:translateY(-1px); }
+        input[type=color] { width:40px; height:40px; border:none; border-radius:8px; cursor:pointer; padding:2px; background:transparent; }
+        input[type=text] { background:#03010A; border:1px solid #1E1A35; border-radius:8px; color:#F0ECFF; padding:10px 12px; font-family:monospace; font-size:13px; width:100%; outline:none; }
+        input[type=text]:focus { border-color:#7C3AED; }
       `}</style>
 
+      {/* HEADER */}
       <div style={{ background:"#0D0B1A", borderBottom:"1px solid #1E1A35", padding:"0 20px", height:60, display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:50 }}>
         <div style={{ fontWeight:800, fontSize:20 }}>🌐 Global<span style={{ color:"#A855F7" }}>Canvas</span></div>
         <button className="btn" onClick={openModal}
@@ -153,13 +189,16 @@ export default function GlobalCanvas() {
         </button>
       </div>
 
+      {/* BANNER */}
       <div style={{ background:"rgba(239,68,68,0.1)", borderBottom:"1px solid rgba(239,68,68,0.3)", padding:"8px 20px", textAlign:"center" }}>
         <span style={{ animation:"pulse 1s infinite", marginRight:8 }}>🔴</span>
         <span style={{ fontWeight:700, color:"#FCA5A5", fontSize:13 }}>ONLY {remaining.toLocaleString()} BLOCKS REMAINING — {pct}% sold forever</span>
       </div>
 
+      {/* MAIN */}
       <div style={{ maxWidth:1100, margin:"0 auto", padding:24, display:"grid", gridTemplateColumns:"1fr 260px", gap:20 }}>
         <div>
+          {/* Stats */}
           <div style={{ display:"flex", gap:12, marginBottom:20, flexWrap:"wrap" }}>
             {[
               { icon:"🧱", label:"Blocks Sold", value:soldCount.toLocaleString(), color:"#A855F7" },
@@ -175,6 +214,7 @@ export default function GlobalCanvas() {
             ))}
           </div>
 
+          {/* Canvas */}
           <div style={{ background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:16, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", borderBottom:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <span style={{ fontWeight:700, fontSize:13 }}>🌍 Live Canvas — 1,000 × 1,000 blocks</span>
@@ -189,15 +229,27 @@ export default function GlobalCanvas() {
                 ))}
               </div>
             </div>
+
+            {/* Hover info */}
+            {hoveredBlock && (
+              <div style={{ padding:"4px 16px", background:"rgba(124,58,237,0.1)", borderBottom:"1px solid #1E1A35", fontSize:11, color:"#A855F7" }}>
+                Block [{hoveredBlock.x}, {hoveredBlock.y}] {ownedBlocksRef.current[`${hoveredBlock.x}_${hoveredBlock.y}`] ? `· Owned by: ${ownedBlocksRef.current[`${hoveredBlock.x}_${hoveredBlock.y}`].name || 'Anonim'}` : '· Available — €1'}
+              </div>
+            )}
+
             <div style={{ overflow:"auto", maxHeight:520, background:"#03010A" }}>
-              <canvas ref={canvasRef} style={{ display:"block", cursor:"crosshair", width:canvasDisplaySize+"px", height:canvasDisplaySize+"px", imageRendering:"pixelated" }} onClick={handleCanvasClick} />
+              <canvas ref={canvasRef}
+                style={{ display:"block", cursor:"crosshair", width:canvasDisplaySize+"px", height:canvasDisplaySize+"px", imageRendering:"pixelated" }}
+                onClick={handleCanvasClick}
+                onMouseMove={handleCanvasHover} />
             </div>
             <div style={{ padding:"10px 16px", borderTop:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ fontSize:11, color:"#6B6585" }}>👆 Click any block to purchase · Zoom in to see individual blocks</span>
+              <span style={{ fontSize:11, color:"#6B6585" }}>👆 Click bloc negru = cumpără · Click bloc colorat = info proprietar</span>
               <span style={{ fontSize:11, color:"#A855F7", fontWeight:700 }}>Zoom: {Math.round(zoom*100)}%</span>
             </div>
           </div>
 
+          {/* Progress */}
           <div style={{ marginTop:16, background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:12, padding:16 }}>
             <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
               <span style={{ fontSize:12, fontWeight:700 }}>Canvas Completion</span>
@@ -214,6 +266,7 @@ export default function GlobalCanvas() {
           </div>
         </div>
 
+        {/* SIDEBAR */}
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
           <div style={{ background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:12, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", borderBottom:"1px solid #1E1A35", display:"flex", alignItems:"center", gap:8 }}>
@@ -268,6 +321,7 @@ export default function GlobalCanvas() {
         </div>
       </div>
 
+      {/* PURCHASE MODAL */}
       {showPurchase && (
         <div style={{ position:"fixed", inset:0, background:"rgba(3,1,10,0.85)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
           onClick={e => { if(e.target===e.currentTarget && !loading) setShowPurchase(false); }}>
@@ -279,27 +333,95 @@ export default function GlobalCanvas() {
               <div style={{ color:"#6B6585", fontSize:12 }}>Block <span style={{ color:"#06B6D4" }}>[{selectedBlock?.x}, {selectedBlock?.y}]</span> · Available</div>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20 }}>
-              {[["Price","€ 1.00"],["Location","["+selectedBlock?.x+","+selectedBlock?.y+"]"],["Ownership","Permanent"],["Customizable","Yes"]].map(([l,v],i) => (
+              {[["Price","€ 1.00"],["Location","["+selectedBlock?.x+","+selectedBlock?.y+"]"],["Ownership","Permanent"],["Customizable","Yes ✅"]].map(([l,v],i) => (
                 <div key={i} style={{ background:"#03010A", borderRadius:8, padding:"10px 12px" }}>
                   <div style={{ fontSize:10, color:"#6B6585", marginBottom:3 }}>{l}</div>
                   <div style={{ fontSize:13, fontWeight:700 }}>{v}</div>
                 </div>
               ))}
             </div>
-            <div style={{ background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.2)", borderRadius:8, padding:"10px 14px", marginBottom:20 }}>
-              <span style={{ fontSize:11, color:"#FCA5A5", fontWeight:600 }}>🔴 {Math.floor(Math.random()*15+3)} people viewing this block right now</span>
+            <div style={{ background:"rgba(16,185,129,0.08)", border:"1px solid rgba(16,185,129,0.2)", borderRadius:8, padding:"10px 14px", marginBottom:20 }}>
+              <span style={{ fontSize:11, color:"#6EE7B7", fontWeight:600 }}>
+                ✅ După plată poți alege culoarea, numele și linkul blocului tău!
+              </span>
             </div>
             <button className="btn" onClick={handleBuyNow} disabled={loading}
               style={{ width:"100%", padding:14, background:loading?"#6B6585":"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:10, color:"#fff", fontWeight:800, fontSize:16, cursor:loading?"not-allowed":"pointer", transition:"all 0.2s", fontFamily:"monospace" }}>
               {loading ? "⏳ Se încarcă..." : "🔒 Cumpără Blocul — €1.00"}
             </button>
-            <div style={{ textAlign:"center", marginTop:10, fontSize:10, color:"#6B6585" }}>
-              Vei fi redirecționat la pagina securizată Stripe ✅
+            <div style={{ textAlign:"center", marginTop:10, fontSize:10, color:"#6B6585" }}>Vei fi redirecționat la pagina securizată Stripe ✅</div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOMIZE MODAL */}
+      {showCustomize && customBlock && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(3,1,10,0.95)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div style={{ background:"#0D0B1A", border:"2px solid #10B981", borderRadius:20, padding:32, maxWidth:480, width:"100%", boxShadow:"0 0 60px rgba(16,185,129,0.3)" }}>
+            <div style={{ textAlign:"center", marginBottom:24 }}>
+              <div style={{ fontSize:48, marginBottom:8 }}>🎉</div>
+              <div style={{ fontWeight:800, fontSize:22, color:"#10B981", marginBottom:4 }}>Plată Reușită!</div>
+              <div style={{ color:"#6B6585", fontSize:13 }}>Acum personalizează blocul tău [{customBlock.x}, {customBlock.y}]</div>
+            </div>
+
+            {/* Color picker */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:12, fontWeight:700, marginBottom:10, color:"#A855F7" }}>🎨 Alege Culoarea Blocului</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
+                {PRESET_COLORS.map((color, i) => (
+                  <div key={i} onClick={() => { setSelectedColor(color); setCustomColor(color); }}
+                    style={{
+                      width:36, height:36, background:color, borderRadius:8, cursor:"pointer",
+                      border: customColor === color ? "3px solid #fff" : "3px solid transparent",
+                      boxShadow: customColor === color ? "0 0 12px rgba(255,255,255,0.5)" : "none",
+                      transition:"all 0.2s"
+                    }} />
+                ))}
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                <input type="color" value={customColor} onChange={e => setCustomColor(e.target.value)} />
+                <span style={{ fontSize:12, color:"#6B6585" }}>Sau alege orice culoare personalizată</span>
+              </div>
+            </div>
+
+            {/* Preview */}
+            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20, padding:"12px 16px", background:"#03010A", borderRadius:10 }}>
+              <div style={{ width:40, height:40, background:customColor, borderRadius:6, flexShrink:0, boxShadow:`0 0 12px ${customColor}66` }} />
+              <div>
+                <div style={{ fontSize:12, fontWeight:700 }}>Preview bloc [{customBlock.x}, {customBlock.y}]</div>
+                <div style={{ fontSize:10, color:"#6B6585" }}>Așa va arăta pe canvas</div>
+              </div>
+            </div>
+
+            {/* Name */}
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:12, fontWeight:700, marginBottom:8, color:"#A855F7" }}>👤 Numele Tău (opțional)</div>
+              <input type="text" placeholder="ex: Ion Popescu sau @username" value={blockName} onChange={e => setBlockName(e.target.value)} />
+            </div>
+
+            {/* Link */}
+            <div style={{ marginBottom:24 }}>
+              <div style={{ fontSize:12, fontWeight:700, marginBottom:8, color:"#A855F7" }}>🔗 Link-ul Tău (opțional)</div>
+              <input type="text" placeholder="ex: https://siteultau.ro" value={blockLink} onChange={e => setBlockLink(e.target.value)} />
+            </div>
+
+            {/* Save button */}
+            <button className="btn" onClick={handleSaveCustomization}
+              style={{ width:"100%", padding:14, background:"linear-gradient(135deg,#10B981,#06B6D4)", border:"none", borderRadius:10, color:"#fff", fontWeight:800, fontSize:16, cursor:"pointer", transition:"all 0.2s", fontFamily:"monospace" }}>
+              ✅ Salvează și Afișează pe Canvas
+            </button>
+
+            <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap", marginTop:16 }}>
+              <button onClick={() => window.open(`https://twitter.com/intent/tweet?text=Am cumpărat Blocul [${customBlock.x}, ${customBlock.y}] pe GlobalCanvas! 🎨 €1 pentru eternitate!&url=https://www.globalcanvas.design`,'_blank')}
+                style={{ padding:"8px 14px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:8, color:"#A855F7", fontSize:12, cursor:"pointer", fontWeight:600 }}>𝕏 Share</button>
+              <button onClick={() => { navigator.clipboard.writeText('https://www.globalcanvas.design'); alert('Link copiat! ✅'); }}
+                style={{ padding:"8px 14px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:8, color:"#A855F7", fontSize:12, cursor:"pointer", fontWeight:600 }}>📋 Copiază Link</button>
             </div>
           </div>
         </div>
       )}
 
+      {/* FOOTER */}
       <div style={{ borderTop:"1px solid #1E1A35", padding:"20px", marginTop:20, textAlign:"center" }}>
         <div style={{ fontWeight:800, fontSize:16, marginBottom:4 }}>Global<span style={{ color:"#A855F7" }}>Canvas</span></div>
         <div style={{ fontSize:11, color:"#6B6585" }}>{soldCount.toLocaleString()} / 1,000,000 blocks sold · {remaining.toLocaleString()} remaining</div>
