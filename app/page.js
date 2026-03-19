@@ -3,26 +3,12 @@
 import { useState, useEffect, useRef } from "react";
 
 const TOTAL_BLOCKS = 1_000_000;
+const GRID_BLOCKS = 1000;
+const BLOCK_SIZE = 20;
 
 const COUNTRY_FLAGS = ["🇺🇸","🇩🇪","🇫🇷","🇯🇵","🇧🇷","🇬🇧","🇨🇦","🇦🇺","🇮🇳","🇰🇷"];
 const USERNAMES = ["pixel_king","art3mis","neon_wolf","cosmic_dot","grid_ghost","voxel_queen","blocksmith","the_painter"];
-
-const PRESET_COLORS = [
-  "#7C3AED","#A855F7","#06B6D4","#10B981",
-  "#F59E0B","#EF4444","#3B82F6","#EC4899",
-  "#14B8A6","#F97316","#FFFFFF","#FFD700"
-];
-
-const BLOCK_SIZE = 10;
-const GRID_BLOCKS = 1000;
-const CANVAS_SIZE = BLOCK_SIZE * GRID_BLOCKS;
-
-function drawBlock(ctx, col, row, color) {
-  const px = col * BLOCK_SIZE;
-  const py = row * BLOCK_SIZE;
-  ctx.fillStyle = color;
-  ctx.fillRect(px + 1, py + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
-}
+const PRESET_COLORS = ["#7C3AED","#A855F7","#06B6D4","#10B981","#F59E0B","#EF4444","#3B82F6","#EC4899","#14B8A6","#F97316","#FFFFFF","#FFD700"];
 
 export default function GlobalCanvas() {
   const [soldCount, setSoldCount] = useState(0);
@@ -33,34 +19,56 @@ export default function GlobalCanvas() {
   const [customBlock, setCustomBlock] = useState(null);
   const [loading, setLoading] = useState(false);
   const [loadingBlocks, setLoadingBlocks] = useState(true);
-  const [zoom, setZoom] = useState(3);
   const [customColor, setCustomColor] = useState("#7C3AED");
   const [blockName, setBlockName] = useState("");
   const [blockLink, setBlockLink] = useState("");
   const [hoveredBlock, setHoveredBlock] = useState(null);
+  const [viewOffset, setViewOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const canvasRef = useRef(null);
   const ownedBlocksRef = useRef({});
+  const blocksDataRef = useRef({});
+
+  const VISIBLE_COLS = 50;
+  const VISIBLE_ROWS = 40;
+  const CANVAS_W = VISIBLE_COLS * BLOCK_SIZE;
+  const CANVAS_H = VISIBLE_ROWS * BLOCK_SIZE;
+
+  const redrawCanvas = (offsetX, offsetY) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#03010A";
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    for (let row = 0; row < VISIBLE_ROWS; row++) {
+      for (let col = 0; col < VISIBLE_COLS; col++) {
+        const blockCol = col + offsetX;
+        const blockRow = row + offsetY;
+        if (blockCol >= GRID_BLOCKS || blockRow >= GRID_BLOCKS) continue;
+        const key = `${blockCol}_${blockRow}`;
+        const px = col * BLOCK_SIZE;
+        const py = row * BLOCK_SIZE;
+        if (blocksDataRef.current[key]) {
+          ctx.fillStyle = blocksDataRef.current[key].color;
+        } else {
+          ctx.fillStyle = "#0A0818";
+        }
+        ctx.fillRect(px + 1, py + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+        ctx.strokeStyle = "#1E1A35";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(px + 0.5, py + 0.5, BLOCK_SIZE - 1, BLOCK_SIZE - 1);
+      }
+    }
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    canvas.width = CANVAS_SIZE;
-    canvas.height = CANVAS_SIZE;
-    ctx.fillStyle = "#03010A";
-    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    for (let row = 0; row < GRID_BLOCKS; row++) {
-      for (let col = 0; col < GRID_BLOCKS; col++) {
-        ctx.fillStyle = "#0A0818";
-        ctx.fillRect(col * BLOCK_SIZE + 1, row * BLOCK_SIZE + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
-      }
-    }
-    ctx.strokeStyle = "#1E1A35";
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= CANVAS_SIZE; i += BLOCK_SIZE) {
-      ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, CANVAS_SIZE); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(CANVAS_SIZE, i); ctx.stroke();
-    }
+    canvas.width = CANVAS_W;
+    canvas.height = CANVAS_H;
+    redrawCanvas(0, 0);
   }, []);
 
   useEffect(() => {
@@ -70,18 +78,14 @@ export default function GlobalCanvas() {
         const data = await response.json();
         if (data.blocks && data.blocks.length > 0) {
           setSoldCount(data.blocks.length);
-          const canvas = canvasRef.current;
-          if (!canvas) return;
-          const ctx = canvas.getContext("2d");
           data.blocks.forEach(block => {
-            drawBlock(ctx, block.x, block.y, block.color);
-            ownedBlocksRef.current[`${block.x}_${block.y}`] = {
-              x: block.x, y: block.y,
+            blocksDataRef.current[`${block.x}_${block.y}`] = {
               color: block.color,
               name: block.owner_name,
               link: block.owner_link
             };
           });
+          redrawCanvas(viewOffset.x, viewOffset.y);
         }
       } catch (err) {
         console.error('Error loading blocks:', err);
@@ -89,8 +93,7 @@ export default function GlobalCanvas() {
         setLoadingBlocks(false);
       }
     };
-    const timer = setTimeout(loadBlocks, 500);
-    return () => clearTimeout(timer);
+    setTimeout(loadBlocks, 300);
   }, []);
 
   useEffect(() => {
@@ -120,76 +123,68 @@ export default function GlobalCanvas() {
     return () => clearInterval(timer);
   }, []);
 
-  const handleSaveCustomization = async () => {
-    if (!customBlock) return;
-    setLoading(true);
-    try {
-      const response = await fetch('/api/blocks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          x: customBlock.x,
-          y: customBlock.y,
-          color: customColor,
-          ownerName: blockName || 'Anonim',
-          ownerLink: blockLink || ''
-        }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const ctx = canvas.getContext("2d");
-          drawBlock(ctx, customBlock.x, customBlock.y, customColor);
-        }
-        ownedBlocksRef.current[`${customBlock.x}_${customBlock.y}`] = {
-          x: customBlock.x, y: customBlock.y,
-          color: customColor, name: blockName, link: blockLink
-        };
-        setSoldCount(c => c + 1);
-        setShowCustomize(false);
-        setCustomBlock(null);
-        setBlockName("");
-        setBlockLink("");
-        setCustomColor("#7C3AED");
-        alert("Blocul tau a fost salvat permanent pe canvas!");
-      }
-    } catch (err) {
-      alert('Eroare la salvare: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
+  const getBlockFromEvent = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const col = Math.floor(x / BLOCK_SIZE) + viewOffset.x;
+    const row = Math.floor(y / BLOCK_SIZE) + viewOffset.y;
+    if (col < 0 || col >= GRID_BLOCKS || row < 0 || row >= GRID_BLOCKS) return null;
+    return { col, row };
   };
 
   const handleCanvasClick = (e) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const pixelX = (e.clientX - rect.left) * scaleX;
-    const pixelY = (e.clientY - rect.top) * scaleY;
-    const col = Math.floor(pixelX / BLOCK_SIZE);
-    const row = Math.floor(pixelY / BLOCK_SIZE);
-    const key = `${col}_${row}`;
-    if (ownedBlocksRef.current[key]) {
-      const block = ownedBlocksRef.current[key];
-      alert(`Bloc [${col},${row}]\nProprietar: ${block.name || 'Anonim'}\nLink: ${block.link || 'N/A'}`);
+    if (isDragging) return;
+    const block = getBlockFromEvent(e);
+    if (!block) return;
+    const key = `${block.col}_${block.row}`;
+    if (blocksDataRef.current[key]) {
+      const b = blocksDataRef.current[key];
+      alert(`Bloc [${block.col}, ${block.row}]\nProprietar: ${b.name || 'Anonim'}\nLink: ${b.link || 'N/A'}`);
       return;
     }
-    setSelectedBlock({ x: col, y: row });
+    setSelectedBlock({ x: block.col, y: block.row });
     setShowPurchase(true);
   };
 
-  const handleCanvasHover = (e) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const col = Math.floor(((e.clientX - rect.left) * scaleX) / BLOCK_SIZE);
-    const row = Math.floor(((e.clientY - rect.top) * scaleY) / BLOCK_SIZE);
-    setHoveredBlock({ x: col, y: row });
+  const handleMouseMove = (e) => {
+    if (isDragging) {
+      const dx = Math.floor((e.clientX - dragStart.x) / BLOCK_SIZE);
+      const dy = Math.floor((e.clientY - dragStart.y) / BLOCK_SIZE);
+      if (dx !== 0 || dy !== 0) {
+        const newX = Math.max(0, Math.min(GRID_BLOCKS - VISIBLE_COLS, viewOffset.x - dx));
+        const newY = Math.max(0, Math.min(GRID_BLOCKS - VISIBLE_ROWS, viewOffset.y - dy));
+        setViewOffset({ x: newX, y: newY });
+        setDragStart({ x: e.clientX, y: e.clientY });
+        redrawCanvas(newX, newY);
+      }
+      return;
+    }
+    const block = getBlockFromEvent(e);
+    if (block) setHoveredBlock({ x: block.col, y: block.row });
+  };
+
+  const handleMouseDown = (e) => {
+    setIsDragging(false);
+    setDragStart({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const navigate = (dir) => {
+    const step = 5;
+    let newX = viewOffset.x;
+    let newY = viewOffset.y;
+    if (dir === 'left') newX = Math.max(0, newX - step);
+    if (dir === 'right') newX = Math.min(GRID_BLOCKS - VISIBLE_COLS, newX + step);
+    if (dir === 'up') newY = Math.max(0, newY - step);
+    if (dir === 'down') newY = Math.min(GRID_BLOCKS - VISIBLE_ROWS, newY + step);
+    setViewOffset({ x: newX, y: newY });
+    redrawCanvas(newX, newY);
   };
 
   const openModal = () => {
@@ -220,9 +215,44 @@ export default function GlobalCanvas() {
     }
   };
 
+  const handleSaveCustomization = async () => {
+    if (!customBlock) return;
+    setLoading(true);
+    try {
+      const response = await fetch('/api/blocks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          x: customBlock.x,
+          y: customBlock.y,
+          color: customColor,
+          ownerName: blockName || 'Anonim',
+          ownerLink: blockLink || ''
+        }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        blocksDataRef.current[`${customBlock.x}_${customBlock.y}`] = {
+          color: customColor, name: blockName, link: blockLink
+        };
+        redrawCanvas(viewOffset.x, viewOffset.y);
+        setSoldCount(c => c + 1);
+        setShowCustomize(false);
+        setCustomBlock(null);
+        setBlockName("");
+        setBlockLink("");
+        setCustomColor("#7C3AED");
+        alert("Blocul tau a fost salvat permanent!");
+      }
+    } catch (err) {
+      alert('Eroare: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const remaining = TOTAL_BLOCKS - soldCount;
   const pct = ((soldCount / TOTAL_BLOCKS) * 100).toFixed(4);
-  const canvasDisplaySize = Math.round(500 * zoom);
 
   return (
     <div style={{ minHeight:"100vh", background:"#03010A", color:"#F0ECFF", fontFamily:"monospace" }}>
@@ -231,7 +261,7 @@ export default function GlobalCanvas() {
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
         @keyframes slideIn { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
-        .btn:hover { opacity:0.85; transform:translateY(-1px); }
+        .btn:hover { opacity:0.85; }
         input[type=color] { width:40px; height:40px; border:none; border-radius:8px; cursor:pointer; padding:2px; background:transparent; }
         input[type=text] { background:#03010A; border:1px solid #1E1A35; border-radius:8px; color:#F0ECFF; padding:10px 12px; font-family:monospace; font-size:13px; width:100%; outline:none; }
         input[type=text]:focus { border-color:#7C3AED; }
@@ -239,13 +269,10 @@ export default function GlobalCanvas() {
 
       <div style={{ background:"#0D0B1A", borderBottom:"1px solid #1E1A35", padding:"0 20px", height:60, display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:50 }}>
         <div style={{ fontWeight:800, fontSize:20 }}>🌐 Global<span style={{ color:"#A855F7" }}>Canvas</span></div>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          {loadingBlocks && <span style={{ fontSize:11, color:"#6B6585" }}>Se incarca blocurile...</span>}
-          <button className="btn" onClick={openModal}
-            style={{ background:"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:8, padding:"8px 18px", color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer", transition:"all 0.2s" }}>
-            Buy Block - 1 EUR
-          </button>
-        </div>
+        <button className="btn" onClick={openModal}
+          style={{ background:"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:8, padding:"8px 18px", color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer" }}>
+          Buy Block - 1 EUR
+        </button>
       </div>
 
       <div style={{ background:"rgba(239,68,68,0.1)", borderBottom:"1px solid rgba(239,68,68,0.3)", padding:"8px 20px", textAlign:"center" }}>
@@ -272,40 +299,44 @@ export default function GlobalCanvas() {
 
           <div style={{ background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:16, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", borderBottom:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ fontWeight:700, fontSize:13 }}>🌍 Live Canvas - 1,000 x 1,000 blocks</span>
+              <span style={{ fontWeight:700, fontSize:13 }}>🌍 Live Canvas - zona [{viewOffset.x},{viewOffset.y}] din 1000x1000</span>
               <div style={{ display:"flex", gap:6 }}>
                 {[
-                  { label:"Zoom In", action:() => setZoom(z => Math.min(+(z+0.5).toFixed(1),8)) },
-                  { label:"Zoom Out", action:() => setZoom(z => Math.max(+(z-0.5).toFixed(1),0.2)) },
-                  { label:"Reset", action:() => setZoom(3) },
-                  { label:"Full Screen", action:() => { const el=document.documentElement; if(!document.fullscreenElement){el.requestFullscreen();}else{document.exitFullscreen();} }},
+                  { label:"◀", action:() => navigate('left') },
+                  { label:"▶", action:() => navigate('right') },
+                  { label:"▲", action:() => navigate('up') },
+                  { label:"▼", action:() => navigate('down') },
+                  { label:"⛶ Full Screen", action:() => { const el=document.documentElement; if(!document.fullscreenElement){el.requestFullscreen();}else{document.exitFullscreen();} }},
                 ].map((b,i) => (
-                  <button key={i} onClick={b.action} className="btn" style={{ padding:"4px 10px", background:"transparent", border:"1px solid #1E1A35", borderRadius:4, color:"#6B6585", fontSize:11, cursor:"pointer", fontFamily:"inherit", transition:"all 0.2s" }}>{b.label}</button>
+                  <button key={i} onClick={b.action} className="btn" style={{ padding:"4px 10px", background:"transparent", border:"1px solid #1E1A35", borderRadius:4, color:"#6B6585", fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>{b.label}</button>
                 ))}
               </div>
             </div>
 
             {hoveredBlock && (
               <div style={{ padding:"4px 16px", background:"rgba(124,58,237,0.1)", borderBottom:"1px solid #1E1A35", fontSize:11, color:"#A855F7" }}>
-                Block [{hoveredBlock.x}, {hoveredBlock.y}] {ownedBlocksRef.current[`${hoveredBlock.x}_${hoveredBlock.y}`] ? `- Proprietar: ${ownedBlocksRef.current[`${hoveredBlock.x}_${hoveredBlock.y}`].name || 'Anonim'}` : '- Disponibil - 1 EUR'}
+                Block [{hoveredBlock.x}, {hoveredBlock.y}] {blocksDataRef.current[`${hoveredBlock.x}_${hoveredBlock.y}`] ? `- Proprietar: ${blocksDataRef.current[`${hoveredBlock.x}_${hoveredBlock.y}`].name || 'Anonim'}` : '- Disponibil - 1 EUR'}
               </div>
             )}
 
-            <div style={{ overflow:"auto", maxHeight:520, background:"#03010A", position:"relative" }}>
+            <div style={{ background:"#03010A", position:"relative" }}>
               {loadingBlocks && (
                 <div style={{ position:"absolute", top:20, left:"50%", transform:"translateX(-50%)", background:"rgba(13,11,26,0.9)", padding:"8px 16px", borderRadius:8, border:"1px solid #1E1A35", fontSize:12, color:"#A855F7", zIndex:10 }}>
-                  Se incarca blocurile salvate...
+                  Se incarca blocurile...
                 </div>
               )}
               <canvas ref={canvasRef}
-                style={{ display:"block", cursor:"crosshair", width:canvasDisplaySize+"px", height:canvasDisplaySize+"px", imageRendering:"pixelated" }}
+                style={{ display:"block", cursor: isDragging ? "grabbing" : "crosshair", width:"100%" }}
                 onClick={handleCanvasClick}
-                onMouseMove={handleCanvasHover} />
+                onMouseMove={handleMouseMove}
+                onMouseDown={handleMouseDown}
+                onMouseUp={handleMouseUp}
+              />
             </div>
 
             <div style={{ padding:"10px 16px", borderTop:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ fontSize:11, color:"#6B6585" }}>Click bloc negru = cumpara | Click bloc colorat = info proprietar | Zoom pentru detalii</span>
-              <span style={{ fontSize:11, color:"#A855F7", fontWeight:700 }}>Zoom: {Math.round(zoom*100)}%</span>
+              <span style={{ fontSize:11, color:"#6B6585" }}>👆 Click bloc = cumpara | Drag = muta | Butoane sageti = navigare</span>
+              <span style={{ fontSize:11, color:"#A855F7", fontWeight:700 }}>Zona: [{viewOffset.x},{viewOffset.y}] din 1000x1000</span>
             </div>
           </div>
 
@@ -342,16 +373,15 @@ export default function GlobalCanvas() {
                   <span style={{ fontSize:10, color:"#6B6585" }}>{item.ago}</span>
                 </div>
               ))}
-              {feedItems.length===0 && <div style={{ padding:16, color:"#6B6585", fontSize:11, textAlign:"center" }}>Waiting for purchases...</div>}
             </div>
           </div>
 
           <div style={{ background:"linear-gradient(135deg,rgba(124,58,237,0.2),rgba(6,182,212,0.1))", border:"1px solid #7C3AED", borderRadius:12, padding:20, textAlign:"center" }}>
             <div style={{ fontSize:32, marginBottom:8, animation:"float 3s ease-in-out infinite" }}>🎨</div>
             <div style={{ fontWeight:800, fontSize:15, marginBottom:6 }}>Own Your Piece</div>
-            <div style={{ fontSize:11, color:"#6B6585", marginBottom:16, lineHeight:1.5 }}>Leave your mark on the world's largest collaborative artwork. Just 1 EUR forever.</div>
+            <div style={{ fontSize:11, color:"#6B6585", marginBottom:16, lineHeight:1.5 }}>Leave your mark forever. Just 1 EUR.</div>
             <button className="btn" onClick={openModal}
-              style={{ width:"100%", padding:12, background:"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:8, color:"#fff", fontWeight:700, fontSize:14, cursor:"pointer", transition:"all 0.2s" }}>
+              style={{ width:"100%", padding:12, background:"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:8, color:"#fff", fontWeight:700, fontSize:14, cursor:"pointer" }}>
               Buy a Block - 1 EUR
             </button>
             <div style={{ fontSize:10, color:"#6B6585", marginTop:8 }}>Stripe - Secure - Instant</div>
@@ -401,10 +431,10 @@ export default function GlobalCanvas() {
               <span style={{ fontSize:11, color:"#6EE7B7", fontWeight:600 }}>Dupa plata alegi culoarea si blocul se salveaza permanent!</span>
             </div>
             <button className="btn" onClick={handleBuyNow} disabled={loading}
-              style={{ width:"100%", padding:14, background:loading?"#6B6585":"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:10, color:"#fff", fontWeight:800, fontSize:16, cursor:loading?"not-allowed":"pointer", transition:"all 0.2s", fontFamily:"monospace" }}>
+              style={{ width:"100%", padding:14, background:loading?"#6B6585":"linear-gradient(135deg,#7C3AED,#A855F7)", border:"none", borderRadius:10, color:"#fff", fontWeight:800, fontSize:16, cursor:loading?"not-allowed":"pointer", fontFamily:"monospace" }}>
               {loading ? "Se incarca..." : "Cumpara Blocul - 1 EUR"}
             </button>
-            <div style={{ textAlign:"center", marginTop:10, fontSize:10, color:"#6B6585" }}>Vei fi redirectionat la pagina securizata Stripe</div>
+            <div style={{ textAlign:"center", marginTop:10, fontSize:10, color:"#6B6585" }}>Vei fi redirectionat la Stripe</div>
           </div>
         </div>
       )}
@@ -415,34 +445,34 @@ export default function GlobalCanvas() {
             <div style={{ textAlign:"center", marginBottom:24 }}>
               <div style={{ fontSize:48, marginBottom:8 }}>🎉</div>
               <div style={{ fontWeight:800, fontSize:22, color:"#10B981", marginBottom:4 }}>Plata Reusita!</div>
-              <div style={{ color:"#6B6585", fontSize:13 }}>Personalizeaza blocul tau [{customBlock.x}, {customBlock.y}]</div>
+              <div style={{ color:"#6B6585", fontSize:13 }}>Personalizeaza blocul [{customBlock.x}, {customBlock.y}]</div>
             </div>
 
             <div style={{ marginBottom:20 }}>
-              <div style={{ fontSize:12, fontWeight:700, marginBottom:10, color:"#A855F7" }}>Alege Culoarea Blocului</div>
+              <div style={{ fontSize:12, fontWeight:700, marginBottom:10, color:"#A855F7" }}>Alege Culoarea</div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
                 {PRESET_COLORS.map((color, i) => (
                   <div key={i} onClick={() => setCustomColor(color)}
-                    style={{ width:36, height:36, background:color, borderRadius:8, cursor:"pointer", border:customColor===color?"3px solid #fff":"3px solid transparent", boxShadow:customColor===color?"0 0 12px rgba(255,255,255,0.5)":"none", transition:"all 0.2s" }} />
+                    style={{ width:36, height:36, background:color, borderRadius:8, cursor:"pointer", border:customColor===color?"3px solid #fff":"3px solid transparent", transition:"all 0.2s" }} />
                 ))}
               </div>
               <div style={{ display:"flex", alignItems:"center", gap:12 }}>
                 <input type="color" value={customColor} onChange={e => setCustomColor(e.target.value)} />
-                <span style={{ fontSize:12, color:"#6B6585" }}>Sau orice culoare personalizata</span>
+                <span style={{ fontSize:12, color:"#6B6585" }}>Sau orice culoare</span>
               </div>
             </div>
 
             <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20, padding:"12px 16px", background:"#03010A", borderRadius:10 }}>
-              <div style={{ width:40, height:40, background:customColor, borderRadius:6, flexShrink:0, boxShadow:"0 0 12px "+customColor+"66" }} />
+              <div style={{ width:40, height:40, background:customColor, borderRadius:6, flexShrink:0 }} />
               <div>
                 <div style={{ fontSize:12, fontWeight:700 }}>Preview bloc [{customBlock.x}, {customBlock.y}]</div>
-                <div style={{ fontSize:10, color:"#6B6585" }}>Asa va arata pe canvas pentru toata lumea</div>
+                <div style={{ fontSize:10, color:"#6B6585" }}>Asa va arata pe canvas</div>
               </div>
             </div>
 
             <div style={{ marginBottom:16 }}>
               <div style={{ fontSize:12, fontWeight:700, marginBottom:8, color:"#A855F7" }}>Numele Tau (optional)</div>
-              <input type="text" placeholder="ex: Ion Popescu sau @username" value={blockName} onChange={e => setBlockName(e.target.value)} />
+              <input type="text" placeholder="ex: Ion Popescu" value={blockName} onChange={e => setBlockName(e.target.value)} />
             </div>
 
             <div style={{ marginBottom:24 }}>
@@ -451,12 +481,12 @@ export default function GlobalCanvas() {
             </div>
 
             <button className="btn" onClick={handleSaveCustomization} disabled={loading}
-              style={{ width:"100%", padding:14, background:loading?"#6B6585":"linear-gradient(135deg,#10B981,#06B6D4)", border:"none", borderRadius:10, color:"#fff", fontWeight:800, fontSize:16, cursor:loading?"not-allowed":"pointer", transition:"all 0.2s", fontFamily:"monospace" }}>
+              style={{ width:"100%", padding:14, background:loading?"#6B6585":"linear-gradient(135deg,#10B981,#06B6D4)", border:"none", borderRadius:10, color:"#fff", fontWeight:800, fontSize:16, cursor:loading?"not-allowed":"pointer", fontFamily:"monospace" }}>
               {loading ? "Se salveaza..." : "Salveaza pe Canvas - Permanent!"}
             </button>
 
-            <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap", marginTop:16 }}>
-              <button onClick={() => window.open("https://twitter.com/intent/tweet?text=Am cumparat Blocul ["+customBlock.x+", "+customBlock.y+"] pe GlobalCanvas! 1 EUR pentru eternitate!&url=https://www.globalcanvas.design","_blank")}
+            <div style={{ display:"flex", gap:8, justifyContent:"center", marginTop:16 }}>
+              <button onClick={() => window.open("https://twitter.com/intent/tweet?text=Am cumparat Blocul ["+customBlock.x+","+customBlock.y+"] pe GlobalCanvas!&url=https://www.globalcanvas.design","_blank")}
                 style={{ padding:"8px 14px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:8, color:"#A855F7", fontSize:12, cursor:"pointer", fontWeight:600 }}>Share Twitter</button>
               <button onClick={() => { navigator.clipboard.writeText("https://www.globalcanvas.design"); alert("Link copiat!"); }}
                 style={{ padding:"8px 14px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:8, color:"#A855F7", fontSize:12, cursor:"pointer", fontWeight:600 }}>Copiaza Link</button>
