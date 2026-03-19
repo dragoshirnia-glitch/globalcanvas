@@ -5,7 +5,7 @@ const sql = neon(process.env.DATABASE_URL);
 export async function GET() {
   try {
     const blocks = await sql`
-      SELECT x, y, color, owner_name, owner_link 
+      SELECT x, y, color, owner_name, owner_link, purchased_at 
       FROM blocks
     `;
     return Response.json({ blocks });

@@ -5,8 +5,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 const TOTAL_BLOCKS = 1_000_000;
 const GRID_BLOCKS = 1000;
 
-const COUNTRY_FLAGS = ["🇺🇸","🇩🇪","🇫🇷","🇯🇵","🇧🇷","🇬🇧","🇨🇦","🇦🇺","🇮🇳","🇰🇷"];
-const USERNAMES = ["pixel_king","art3mis","neon_wolf","cosmic_dot","grid_ghost","voxel_queen","blocksmith","the_painter"];
 const PRESET_COLORS = ["#7C3AED","#A855F7","#06B6D4","#10B981","#F59E0B","#EF4444","#3B82F6","#EC4899","#14B8A6","#F97316","#FFFFFF","#FFD700"];
 
 const CANVAS_W = 800;
@@ -33,70 +31,40 @@ export default function GlobalCanvas() {
   const canvasRef = useRef(null);
   const blocksDataRef = useRef({});
 
-  // zoom levels: 1=overview, 2,4,8,16,20=detail
   const ZOOM_LEVELS = [1, 2, 4, 8, 16, 20];
-
-  const getBlockSize = () => zoomLevel;
 
   const redrawCanvas = useCallback((zoom, panX, panY) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
-    const blockSize = zoom;
-
     ctx.fillStyle = "#03010A";
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-    const startCol = Math.max(0, Math.floor(panX / blockSize));
-    const startRow = Math.max(0, Math.floor(panY / blockSize));
-    const endCol = Math.min(GRID_BLOCKS, startCol + Math.ceil(CANVAS_W / blockSize) + 1);
-    const endRow = Math.min(GRID_BLOCKS, startRow + Math.ceil(CANVAS_H / blockSize) + 1);
-
+    const startCol = Math.max(0, Math.floor(panX / zoom));
+    const startRow = Math.max(0, Math.floor(panY / zoom));
+    const endCol = Math.min(GRID_BLOCKS, startCol + Math.ceil(CANVAS_W / zoom) + 1);
+    const endRow = Math.min(GRID_BLOCKS, startRow + Math.ceil(CANVAS_H / zoom) + 1);
     for (let row = startRow; row < endRow; row++) {
       for (let col = startCol; col < endCol; col++) {
-        const screenX = col * blockSize - panX;
-        const screenY = row * blockSize - panY;
+        const screenX = col * zoom - panX;
+        const screenY = row * zoom - panY;
         const key = `${col}_${row}`;
-
-        if (blockSize >= 4) {
-          if (blocksDataRef.current[key]) {
-            ctx.fillStyle = blocksDataRef.current[key].color;
-            ctx.fillRect(screenX + 1, screenY + 1, blockSize - 2, blockSize - 2);
-          } else {
-            ctx.fillStyle = "#0A0818";
-            ctx.fillRect(screenX + 1, screenY + 1, blockSize - 2, blockSize - 2);
-            if (blockSize >= 8) {
-              ctx.strokeStyle = "#1E1A35";
-              ctx.lineWidth = 0.5;
-              ctx.strokeRect(screenX + 0.5, screenY + 0.5, blockSize - 1, blockSize - 1);
-            }
+        if (zoom >= 4) {
+          ctx.fillStyle = blocksDataRef.current[key] ? blocksDataRef.current[key].color : "#0A0818";
+          ctx.fillRect(screenX + 1, screenY + 1, zoom - 2, zoom - 2);
+          if (zoom >= 8) {
+            ctx.strokeStyle = "#1E1A3566";
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(screenX + 0.5, screenY + 0.5, zoom - 1, zoom - 1);
           }
         } else {
-          if (blocksDataRef.current[key]) {
-            ctx.fillStyle = blocksDataRef.current[key].color;
-          } else {
-            ctx.fillStyle = "#0D0B1A";
-          }
-          ctx.fillRect(screenX, screenY, blockSize, blockSize);
+          ctx.fillStyle = blocksDataRef.current[key] ? blocksDataRef.current[key].color : "#0D0B1A";
+          ctx.fillRect(screenX, screenY, zoom, zoom);
         }
-      }
-    }
-
-    // Draw grid lines only at higher zoom levels
-    if (blockSize >= 8) {
-      ctx.strokeStyle = "#1E1A3566";
-      ctx.lineWidth = 0.5;
-      for (let col = startCol; col <= endCol; col++) {
-        const screenX = col * blockSize - panX;
-        ctx.beginPath(); ctx.moveTo(screenX, 0); ctx.lineTo(screenX, CANVAS_H); ctx.stroke();
-      }
-      for (let row = startRow; row <= endRow; row++) {
-        const screenY = row * blockSize - panY;
-        ctx.beginPath(); ctx.moveTo(0, screenY); ctx.lineTo(CANVAS_W, screenY); ctx.stroke();
       }
     }
   }, []);
 
+  // Load blocks from database
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -120,6 +88,19 @@ export default function GlobalCanvas() {
             };
           });
           redrawCanvas(zoomLevel, panOffset.x, panOffset.y);
+
+          // Populam feed-ul cu ultimele 10 cumparari reale
+          const sorted = [...data.blocks]
+            .sort((a, b) => new Date(b.purchased_at) - new Date(a.purchased_at))
+            .slice(0, 10);
+          setFeedItems(sorted.map(block => ({
+            id: block.x + '_' + block.y,
+            name: block.owner_name || 'Anonim',
+            x: block.x,
+            y: block.y,
+            color: block.color,
+            time: block.purchased_at ? new Date(block.purchased_at).toLocaleTimeString() : ''
+          })));
         }
       } catch (err) {
         console.error('Error loading blocks:', err);
@@ -130,6 +111,7 @@ export default function GlobalCanvas() {
     setTimeout(loadBlocks, 300);
   }, []);
 
+  // Check if returned from Stripe
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('success') === 'true') {
@@ -143,31 +125,49 @@ export default function GlobalCanvas() {
     }
   }, []);
 
+  // Poll for new blocks every 10 seconds
   useEffect(() => {
-    const timer = setInterval(() => {
-      setFeedItems(prev => [{
-        id: Date.now(),
-        flag: COUNTRY_FLAGS[Math.floor(Math.random() * COUNTRY_FLAGS.length)],
-        user: USERNAMES[Math.floor(Math.random() * USERNAMES.length)],
-        x: Math.floor(Math.random() * GRID_BLOCKS),
-        y: Math.floor(Math.random() * GRID_BLOCKS),
-        ago: "just now"
-      }, ...prev.slice(0, 10)]);
-    }, 3500);
+    const timer = setInterval(async () => {
+      try {
+        const response = await fetch('/api/blocks');
+        const data = await response.json();
+        if (data.blocks) {
+          const newCount = data.blocks.length;
+          if (newCount > soldCount) {
+            setSoldCount(newCount);
+            data.blocks.forEach(block => {
+              blocksDataRef.current[`${block.x}_${block.y}`] = {
+                color: block.color,
+                name: block.owner_name,
+                link: block.owner_link
+              };
+            });
+            redrawCanvas(zoomLevel, panOffset.x, panOffset.y);
+            const sorted = [...data.blocks]
+              .sort((a, b) => new Date(b.purchased_at) - new Date(a.purchased_at))
+              .slice(0, 10);
+            setFeedItems(sorted.map(block => ({
+              id: block.x + '_' + block.y,
+              name: block.owner_name || 'Anonim',
+              x: block.x,
+              y: block.y,
+              color: block.color,
+              time: block.purchased_at ? new Date(block.purchased_at).toLocaleTimeString() : ''
+            })));
+          }
+        }
+      } catch (err) {}
+    }, 10000);
     return () => clearInterval(timer);
-  }, []);
+  }, [soldCount, zoomLevel, panOffset]);
 
   const handleZoomIn = () => {
     const idx = ZOOM_LEVELS.indexOf(zoomLevel);
     if (idx < ZOOM_LEVELS.length - 1) {
       const newZoom = ZOOM_LEVELS[idx + 1];
-      const centerX = panOffset.x + CANVAS_W / 2;
-      const centerY = panOffset.y + CANVAS_H / 2;
-      const ratio = newZoom / zoomLevel;
-      const newPanX = Math.max(0, centerX * ratio - CANVAS_W / 2);
-      const newPanY = Math.max(0, centerY * ratio - CANVAS_H / 2);
-      setZoomLevel(newZoom);
-      setPanOffset({ x: newPanX, y: newPanY });
+      const newPanX = Math.max(0, (panOffset.x + CANVAS_W/2) * (newZoom/zoomLevel) - CANVAS_W/2);
+      const newPanY = Math.max(0, (panOffset.y + CANVAS_H/2) * (newZoom/zoomLevel) - CANVAS_H/2);
+      setZoomLevel(newZoom); setPanOffset({ x: newPanX, y: newPanY });
       redrawCanvas(newZoom, newPanX, newPanY);
     }
   };
@@ -176,27 +176,21 @@ export default function GlobalCanvas() {
     const idx = ZOOM_LEVELS.indexOf(zoomLevel);
     if (idx > 0) {
       const newZoom = ZOOM_LEVELS[idx - 1];
-      const centerX = panOffset.x + CANVAS_W / 2;
-      const centerY = panOffset.y + CANVAS_H / 2;
-      const ratio = newZoom / zoomLevel;
-      const newPanX = Math.max(0, centerX * ratio - CANVAS_W / 2);
-      const newPanY = Math.max(0, centerY * ratio - CANVAS_H / 2);
-      setZoomLevel(newZoom);
-      setPanOffset({ x: newPanX, y: newPanY });
+      const newPanX = Math.max(0, (panOffset.x + CANVAS_W/2) * (newZoom/zoomLevel) - CANVAS_W/2);
+      const newPanY = Math.max(0, (panOffset.y + CANVAS_H/2) * (newZoom/zoomLevel) - CANVAS_H/2);
+      setZoomLevel(newZoom); setPanOffset({ x: newPanX, y: newPanY });
       redrawCanvas(newZoom, newPanX, newPanY);
     }
   };
 
   const handleResetView = () => {
-    setZoomLevel(4);
-    setPanOffset({ x: 0, y: 0 });
+    setZoomLevel(4); setPanOffset({ x: 0, y: 0 });
     redrawCanvas(4, 0, 0);
   };
 
   const handleWheel = (e) => {
     e.preventDefault();
-    if (e.deltaY < 0) handleZoomIn();
-    else handleZoomOut();
+    if (e.deltaY < 0) handleZoomIn(); else handleZoomOut();
   };
 
   const getBlockFromScreen = (screenX, screenY) => {
@@ -210,10 +204,8 @@ export default function GlobalCanvas() {
     if (isDragging) return;
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = CANVAS_W / rect.width;
-    const scaleY = CANVAS_H / rect.height;
-    const screenX = (e.clientX - rect.left) * scaleX;
-    const screenY = (e.clientY - rect.top) * scaleY;
+    const screenX = (e.clientX - rect.left) * (CANVAS_W / rect.width);
+    const screenY = (e.clientY - rect.top) * (CANVAS_H / rect.height);
     const block = getBlockFromScreen(screenX, screenY);
     if (!block) return;
     const key = `${block.col}_${block.row}`;
@@ -229,14 +221,11 @@ export default function GlobalCanvas() {
   const handleMouseMove = (e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = CANVAS_W / rect.width;
-    const scaleY = CANVAS_H / rect.height;
-    const screenX = (e.clientX - rect.left) * scaleX;
-    const screenY = (e.clientY - rect.top) * scaleY;
-
+    const screenX = (e.clientX - rect.left) * (CANVAS_W / rect.width);
+    const screenY = (e.clientY - rect.top) * (CANVAS_H / rect.height);
     if (isDragging) {
-      const dx = (e.clientX - dragStart.x) * scaleX;
-      const dy = (e.clientY - dragStart.y) * scaleY;
+      const dx = (e.clientX - dragStart.x) * (CANVAS_W / rect.width);
+      const dy = (e.clientY - dragStart.y) * (CANVAS_H / rect.height);
       const maxPanX = Math.max(0, GRID_BLOCKS * zoomLevel - CANVAS_W);
       const maxPanY = Math.max(0, GRID_BLOCKS * zoomLevel - CANVAS_H);
       const newPanX = Math.max(0, Math.min(maxPanX, dragPanStart.x - dx));
@@ -245,7 +234,6 @@ export default function GlobalCanvas() {
       redrawCanvas(zoomLevel, newPanX, newPanY);
       return;
     }
-
     const block = getBlockFromScreen(screenX, screenY);
     if (block) setHoveredBlock({ x: block.col, y: block.row });
   };
@@ -279,16 +267,9 @@ export default function GlobalCanvas() {
         body: JSON.stringify({ blockX: selectedBlock.x, blockY: selectedBlock.y }),
       });
       const data = await response.json();
-      if (data.url) {
-        window.location.href = data.url;
-      } else {
-        alert('Eroare: ' + (data.error || 'Unknown error'));
-        setLoading(false);
-      }
-    } catch (err) {
-      alert('Eroare: ' + err.message);
-      setLoading(false);
-    }
+      if (data.url) { window.location.href = data.url; }
+      else { alert('Eroare: ' + (data.error || 'Unknown error')); setLoading(false); }
+    } catch (err) { alert('Eroare: ' + err.message); setLoading(false); }
   };
 
   const handleSaveCustomization = async () => {
@@ -298,38 +279,36 @@ export default function GlobalCanvas() {
       const response = await fetch('/api/blocks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          x: customBlock.x,
-          y: customBlock.y,
-          color: customColor,
-          ownerName: blockName || 'Anonim',
-          ownerLink: blockLink || ''
-        }),
+        body: JSON.stringify({ x: customBlock.x, y: customBlock.y, color: customColor, ownerName: blockName || 'Anonim', ownerLink: blockLink || '' }),
       });
       const data = await response.json();
       if (data.success) {
-        blocksDataRef.current[`${customBlock.x}_${customBlock.y}`] = {
-          color: customColor, name: blockName, link: blockLink
-        };
+        blocksDataRef.current[`${customBlock.x}_${customBlock.y}`] = { color: customColor, name: blockName, link: blockLink };
         redrawCanvas(zoomLevel, panOffset.x, panOffset.y);
         setSoldCount(c => c + 1);
+
+        // Adauga in feed ca prima intrare
+        setFeedItems(prev => [{
+          id: customBlock.x + '_' + customBlock.y,
+          name: blockName || 'Anonim',
+          x: customBlock.x,
+          y: customBlock.y,
+          color: customColor,
+          time: new Date().toLocaleTimeString()
+        }, ...prev.slice(0, 9)]);
+
         setShowCustomize(false);
         setCustomBlock(null);
         setBlockName(""); setBlockLink(""); setCustomColor("#7C3AED");
         alert("Blocul tau a fost salvat permanent!");
       }
-    } catch (err) {
-      alert('Eroare: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { alert('Eroare: ' + err.message); }
+    finally { setLoading(false); }
   };
 
   const remaining = TOTAL_BLOCKS - soldCount;
   const pct = ((soldCount / TOTAL_BLOCKS) * 100).toFixed(4);
   const zoomPercent = Math.round((zoomLevel / 20) * 100);
-  const visibleCols = Math.floor(CANVAS_W / zoomLevel);
-  const visibleRows = Math.floor(CANVAS_H / zoomLevel);
   const startCol = Math.floor(panOffset.x / zoomLevel);
   const startRow = Math.floor(panOffset.y / zoomLevel);
 
@@ -377,36 +356,17 @@ export default function GlobalCanvas() {
           </div>
 
           <div style={{ background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:16, overflow:"hidden" }}>
-            {/* Toolbar */}
             <div style={{ padding:"10px 16px", borderBottom:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-              <span style={{ fontWeight:700, fontSize:12 }}>
-                🌍 GlobalCanvas — Zona [{startCol},{startRow}] | Zoom: {zoomPercent}%
-              </span>
+              <span style={{ fontWeight:700, fontSize:12 }}>🌍 GlobalCanvas - Zona [{startCol},{startRow}] | Zoom: {zoomPercent}%</span>
               <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                {/* Zoom controls */}
-                <button onClick={handleZoomOut} className="btn"
-                  style={{ padding:"4px 12px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:4, color:"#A855F7", fontSize:13, cursor:"pointer", fontWeight:700 }}>
-                  🔍−
-                </button>
-                <div style={{ padding:"4px 10px", background:"#03010A", border:"1px solid #1E1A35", borderRadius:4, color:"#A855F7", fontSize:11, display:"flex", alignItems:"center", minWidth:60, justifyContent:"center" }}>
-                  {zoomPercent}%
-                </div>
-                <button onClick={handleZoomIn} className="btn"
-                  style={{ padding:"4px 12px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:4, color:"#A855F7", fontSize:13, cursor:"pointer", fontWeight:700 }}>
-                  🔍+
-                </button>
-                <button onClick={handleResetView} className="btn"
-                  style={{ padding:"4px 10px", background:"transparent", border:"1px solid #1E1A35", borderRadius:4, color:"#6B6585", fontSize:11, cursor:"pointer" }}>
-                  Reset
-                </button>
-                <button onClick={() => { const el=document.documentElement; if(!document.fullscreenElement){el.requestFullscreen();}else{document.exitFullscreen();} }} className="btn"
-                  style={{ padding:"4px 10px", background:"transparent", border:"1px solid #1E1A35", borderRadius:4, color:"#6B6585", fontSize:11, cursor:"pointer" }}>
-                  ⛶ Full
-                </button>
+                <button onClick={handleZoomOut} className="btn" style={{ padding:"4px 12px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:4, color:"#A855F7", fontSize:13, cursor:"pointer", fontWeight:700 }}>🔍−</button>
+                <div style={{ padding:"4px 10px", background:"#03010A", border:"1px solid #1E1A35", borderRadius:4, color:"#A855F7", fontSize:11, display:"flex", alignItems:"center", minWidth:60, justifyContent:"center" }}>{zoomPercent}%</div>
+                <button onClick={handleZoomIn} className="btn" style={{ padding:"4px 12px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:4, color:"#A855F7", fontSize:13, cursor:"pointer", fontWeight:700 }}>🔍+</button>
+                <button onClick={handleResetView} className="btn" style={{ padding:"4px 10px", background:"transparent", border:"1px solid #1E1A35", borderRadius:4, color:"#6B6585", fontSize:11, cursor:"pointer" }}>Reset</button>
+                <button onClick={() => { const el=document.documentElement; if(!document.fullscreenElement){el.requestFullscreen();}else{document.exitFullscreen();} }} className="btn" style={{ padding:"4px 10px", background:"transparent", border:"1px solid #1E1A35", borderRadius:4, color:"#6B6585", fontSize:11, cursor:"pointer" }}>⛶ Full</button>
               </div>
             </div>
 
-            {/* Zoom level indicator */}
             <div style={{ padding:"4px 16px", background:"rgba(124,58,237,0.05)", borderBottom:"1px solid #1E1A35", display:"flex", alignItems:"center", gap:8 }}>
               <span style={{ fontSize:10, color:"#6B6585" }}>Zoom:</span>
               {ZOOM_LEVELS.map((z, i) => (
@@ -414,28 +374,20 @@ export default function GlobalCanvas() {
                   const ratio = z / zoomLevel;
                   const newPanX = Math.max(0, (panOffset.x + CANVAS_W/2) * ratio - CANVAS_W/2);
                   const newPanY = Math.max(0, (panOffset.y + CANVAS_H/2) * ratio - CANVAS_H/2);
-                  setZoomLevel(z);
-                  setPanOffset({ x: newPanX, y: newPanY });
+                  setZoomLevel(z); setPanOffset({ x: newPanX, y: newPanY });
                   redrawCanvas(z, newPanX, newPanY);
-                }} style={{
-                  padding:"2px 8px", borderRadius:4, fontSize:10, cursor:"pointer", fontFamily:"monospace",
-                  background: zoomLevel === z ? "#7C3AED" : "transparent",
-                  border: zoomLevel === z ? "1px solid #7C3AED" : "1px solid #1E1A35",
-                  color: zoomLevel === z ? "#fff" : "#6B6585"
-                }}>
-                  {z === 1 ? "Ansamblu" : z === 2 ? "Larg" : z === 4 ? "Normal" : z === 8 ? "Detaliu" : z === 16 ? "Zoom" : "Max"}
+                }} style={{ padding:"2px 8px", borderRadius:4, fontSize:10, cursor:"pointer", fontFamily:"monospace", background:zoomLevel===z?"#7C3AED":"transparent", border:zoomLevel===z?"1px solid #7C3AED":"1px solid #1E1A35", color:zoomLevel===z?"#fff":"#6B6585" }}>
+                  {z===1?"Ansamblu":z===2?"Larg":z===4?"Normal":z===8?"Detaliu":z===16?"Zoom":"Max"}
                 </button>
               ))}
             </div>
 
-            {/* Hover info */}
             {hoveredBlock && (
               <div style={{ padding:"4px 16px", background:"rgba(124,58,237,0.1)", borderBottom:"1px solid #1E1A35", fontSize:11, color:"#A855F7" }}>
                 Block [{hoveredBlock.x}, {hoveredBlock.y}] {blocksDataRef.current[`${hoveredBlock.x}_${hoveredBlock.y}`] ? `- Proprietar: ${blocksDataRef.current[`${hoveredBlock.x}_${hoveredBlock.y}`].name || 'Anonim'}` : '- Disponibil - 1 EUR'}
               </div>
             )}
 
-            {/* Canvas */}
             <div style={{ background:"#03010A", position:"relative", overflow:"hidden" }}>
               {loadingBlocks && (
                 <div style={{ position:"absolute", top:20, left:"50%", transform:"translateX(-50%)", background:"rgba(13,11,26,0.9)", padding:"8px 16px", borderRadius:8, border:"1px solid #1E1A35", fontSize:12, color:"#A855F7", zIndex:10 }}>
@@ -448,21 +400,15 @@ export default function GlobalCanvas() {
                 onMouseMove={handleMouseMove}
                 onMouseDown={handleMouseDown}
                 onMouseUp={handleMouseUp}
-                onWheel={handleWheel}
-              />
+                onWheel={handleWheel} />
             </div>
 
             <div style={{ padding:"8px 16px", borderTop:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ fontSize:10, color:"#6B6585" }}>
-                👆 Click = cumpara | Drag = muta | Scroll = zoom | {visibleCols}x{visibleRows} blocuri vizibile
-              </span>
-              <span style={{ fontSize:10, color:"#A855F7", fontWeight:700 }}>
-                {soldCount} / 1,000,000 vandute
-              </span>
+              <span style={{ fontSize:10, color:"#6B6585" }}>Click = cumpara | Drag = muta | Scroll = zoom</span>
+              <span style={{ fontSize:10, color:"#A855F7", fontWeight:700 }}>{soldCount} / 1,000,000 vandute</span>
             </div>
           </div>
 
-          {/* Progress */}
           <div style={{ marginTop:16, background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:12, padding:16 }}>
             <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
               <span style={{ fontSize:12, fontWeight:700 }}>Canvas Completion</span>
@@ -481,23 +427,47 @@ export default function GlobalCanvas() {
 
         {/* SIDEBAR */}
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+          {/* LIVE FEED - DOAR CUMPARARI REALE */}
           <div style={{ background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:12, overflow:"hidden" }}>
-            <div style={{ padding:"12px 16px", borderBottom:"1px solid #1E1A35", display:"flex", alignItems:"center", gap:8 }}>
-              <div style={{ width:7, height:7, background:"#10B981", borderRadius:"50%", animation:"pulse 1s infinite" }} />
-              <span style={{ fontSize:12, fontWeight:700 }}>Live Purchases</span>
+            <div style={{ padding:"12px 16px", borderBottom:"1px solid #1E1A35", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <div style={{ width:7, height:7, background:"#10B981", borderRadius:"50%", animation:"pulse 1s infinite" }} />
+                <span style={{ fontSize:12, fontWeight:700 }}>Cumparari Reale</span>
+              </div>
+              <span style={{ fontSize:10, color:"#6B6585" }}>Live</span>
             </div>
             <div style={{ padding:"6px 0", minHeight:180 }}>
-              {feedItems.map((item,i) => (
-                <div key={item.id} style={{ padding:"6px 12px", display:"flex", alignItems:"center", gap:8, borderLeft:i===0?"2px solid #7C3AED":"2px solid transparent", animation:i===0?"slideIn 0.3s ease":"none" }}>
-                  <span style={{ fontSize:14 }}>{item.flag}</span>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <span style={{ color:"#A855F7", fontSize:11, fontWeight:600 }}>{item.user}</span>
-                    <span style={{ color:"#6B6585", fontSize:10 }}> [{item.x},{item.y}]</span>
-                  </div>
-                  <span style={{ fontSize:10, color:"#6B6585" }}>{item.ago}</span>
+              {feedItems.length === 0 ? (
+                <div style={{ padding:24, textAlign:"center" }}>
+                  <div style={{ fontSize:24, marginBottom:8 }}>🎨</div>
+                  <div style={{ fontSize:12, color:"#6B6585", marginBottom:4 }}>Nicio cumparare inca</div>
+                  <div style={{ fontSize:11, color:"#3D3560" }}>Fii primul care cumpara un bloc!</div>
                 </div>
-              ))}
+              ) : (
+                feedItems.map((item, i) => (
+                  <div key={item.id} style={{ padding:"8px 12px", display:"flex", alignItems:"center", gap:8, borderLeft:i===0?"2px solid #10B981":"2px solid transparent", borderBottom:"1px solid #0D0B1A", animation:i===0?"slideIn 0.3s ease":"none" }}>
+                    <div style={{ width:12, height:12, background:item.color, borderRadius:3, flexShrink:0, border:"1px solid rgba(255,255,255,0.2)" }} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ color:"#10B981", fontSize:11, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {item.name}
+                      </div>
+                      <div style={{ color:"#6B6585", fontSize:10 }}>
+                        Bloc [{item.x}, {item.y}]
+                      </div>
+                    </div>
+                    <div style={{ fontSize:9, color:"#3D3560", textAlign:"right", flexShrink:0 }}>
+                      {item.time}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
+            {feedItems.length > 0 && (
+              <div style={{ padding:"8px 12px", borderTop:"1px solid #1E1A35", textAlign:"center" }}>
+                <span style={{ fontSize:10, color:"#6B6585" }}>{soldCount} cumparari totale</span>
+              </div>
+            )}
           </div>
 
           <div style={{ background:"linear-gradient(135deg,rgba(124,58,237,0.2),rgba(6,182,212,0.1))", border:"1px solid #7C3AED", borderRadius:12, padding:20, textAlign:"center" }}>
@@ -515,25 +485,24 @@ export default function GlobalCanvas() {
             <div style={{ padding:"12px 16px", borderBottom:"1px solid #1E1A35" }}>
               <span style={{ fontSize:12, fontWeight:700 }}>🏆 Top Collectors</span>
             </div>
-            {[
-              {rank:1,user:"pixel_king",country:"🇺🇸",blocks:47},
-              {rank:2,user:"art3mis",country:"🇩🇪",blocks:31},
-              {rank:3,user:"neon_wolf",country:"🇯🇵",blocks:28},
-              {rank:4,user:"cosmic_dot",country:"🇫🇷",blocks:22},
-              {rank:5,user:"grid_ghost",country:"🇧🇷",blocks:19},
-            ].map((u,i) => (
-              <div key={i} style={{ padding:"10px 16px", display:"flex", alignItems:"center", gap:10, borderBottom:i<4?"1px solid #1E1A35":"none" }}>
-                <span style={{ fontSize:14, minWidth:24, fontWeight:800, color:i===0?"#F59E0B":i===1?"#C0C0C0":i===2?"#CD7F32":"#6B6585" }}>#{u.rank}</span>
-                <span>{u.country}</span>
-                <span style={{ flex:1, fontSize:11, fontWeight:600 }}>{u.user}</span>
-                <span style={{ fontSize:10, color:"#6B6585" }}>{u.blocks} blocks</span>
+            {soldCount === 0 ? (
+              <div style={{ padding:20, textAlign:"center", color:"#6B6585", fontSize:12 }}>
+                Leaderboard-ul va aparea dupa primele cumparari!
               </div>
-            ))}
+            ) : (
+              feedItems.slice(0, 5).map((item, i) => (
+                <div key={i} style={{ padding:"10px 16px", display:"flex", alignItems:"center", gap:10, borderBottom:i<4?"1px solid #1E1A35":"none" }}>
+                  <span style={{ fontSize:14, minWidth:24, fontWeight:800, color:i===0?"#F59E0B":i===1?"#C0C0C0":i===2?"#CD7F32":"#6B6585" }}>#{i+1}</span>
+                  <div style={{ width:10, height:10, background:item.color, borderRadius:2 }} />
+                  <span style={{ flex:1, fontSize:11, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
+                  <span style={{ fontSize:10, color:"#6B6585" }}>[{item.x},{item.y}]</span>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
 
-      {/* PURCHASE MODAL */}
       {showPurchase && (
         <div style={{ position:"fixed", inset:0, background:"rgba(3,1,10,0.85)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
           onClick={e => { if(e.target===e.currentTarget && !loading) setShowPurchase(false); }}>
@@ -564,7 +533,6 @@ export default function GlobalCanvas() {
         </div>
       )}
 
-      {/* CUSTOMIZE MODAL */}
       {showCustomize && customBlock && (
         <div style={{ position:"fixed", inset:0, background:"rgba(3,1,10,0.95)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
           <div style={{ background:"#0D0B1A", border:"2px solid #10B981", borderRadius:20, padding:32, maxWidth:480, width:"100%", boxShadow:"0 0 60px rgba(16,185,129,0.3)" }}>
