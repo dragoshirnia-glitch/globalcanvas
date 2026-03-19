@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 const TOTAL_BLOCKS = 1_000_000;
 const GRID_BLOCKS = 1000;
-const BLOCK_SIZE = 20;
 
 const COUNTRY_FLAGS = ["🇺🇸","🇩🇪","🇫🇷","🇯🇵","🇧🇷","🇬🇧","🇨🇦","🇦🇺","🇮🇳","🇰🇷"];
 const USERNAMES = ["pixel_king","art3mis","neon_wolf","cosmic_dot","grid_ghost","voxel_queen","blocksmith","the_painter"];
 const PRESET_COLORS = ["#7C3AED","#A855F7","#06B6D4","#10B981","#F59E0B","#EF4444","#3B82F6","#EC4899","#14B8A6","#F97316","#FFFFFF","#FFD700"];
+
+const CANVAS_W = 800;
+const CANVAS_H = 600;
 
 export default function GlobalCanvas() {
   const [soldCount, setSoldCount] = useState(0);
@@ -23,52 +25,84 @@ export default function GlobalCanvas() {
   const [blockName, setBlockName] = useState("");
   const [blockLink, setBlockLink] = useState("");
   const [hoveredBlock, setHoveredBlock] = useState(null);
-  const [viewOffset, setViewOffset] = useState({ x: 0, y: 0 });
+  const [zoomLevel, setZoomLevel] = useState(4);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [dragPanStart, setDragPanStart] = useState({ x: 0, y: 0 });
   const canvasRef = useRef(null);
-  const ownedBlocksRef = useRef({});
   const blocksDataRef = useRef({});
 
-  const VISIBLE_COLS = 50;
-  const VISIBLE_ROWS = 40;
-  const CANVAS_W = VISIBLE_COLS * BLOCK_SIZE;
-  const CANVAS_H = VISIBLE_ROWS * BLOCK_SIZE;
+  // zoom levels: 1=overview, 2,4,8,16,20=detail
+  const ZOOM_LEVELS = [1, 2, 4, 8, 16, 20];
 
-  const redrawCanvas = (offsetX, offsetY) => {
+  const getBlockSize = () => zoomLevel;
+
+  const redrawCanvas = useCallback((zoom, panX, panY) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
+    const blockSize = zoom;
+
     ctx.fillStyle = "#03010A";
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-    for (let row = 0; row < VISIBLE_ROWS; row++) {
-      for (let col = 0; col < VISIBLE_COLS; col++) {
-        const blockCol = col + offsetX;
-        const blockRow = row + offsetY;
-        if (blockCol >= GRID_BLOCKS || blockRow >= GRID_BLOCKS) continue;
-        const key = `${blockCol}_${blockRow}`;
-        const px = col * BLOCK_SIZE;
-        const py = row * BLOCK_SIZE;
-        if (blocksDataRef.current[key]) {
-          ctx.fillStyle = blocksDataRef.current[key].color;
+    const startCol = Math.max(0, Math.floor(panX / blockSize));
+    const startRow = Math.max(0, Math.floor(panY / blockSize));
+    const endCol = Math.min(GRID_BLOCKS, startCol + Math.ceil(CANVAS_W / blockSize) + 1);
+    const endRow = Math.min(GRID_BLOCKS, startRow + Math.ceil(CANVAS_H / blockSize) + 1);
+
+    for (let row = startRow; row < endRow; row++) {
+      for (let col = startCol; col < endCol; col++) {
+        const screenX = col * blockSize - panX;
+        const screenY = row * blockSize - panY;
+        const key = `${col}_${row}`;
+
+        if (blockSize >= 4) {
+          if (blocksDataRef.current[key]) {
+            ctx.fillStyle = blocksDataRef.current[key].color;
+            ctx.fillRect(screenX + 1, screenY + 1, blockSize - 2, blockSize - 2);
+          } else {
+            ctx.fillStyle = "#0A0818";
+            ctx.fillRect(screenX + 1, screenY + 1, blockSize - 2, blockSize - 2);
+            if (blockSize >= 8) {
+              ctx.strokeStyle = "#1E1A35";
+              ctx.lineWidth = 0.5;
+              ctx.strokeRect(screenX + 0.5, screenY + 0.5, blockSize - 1, blockSize - 1);
+            }
+          }
         } else {
-          ctx.fillStyle = "#0A0818";
+          if (blocksDataRef.current[key]) {
+            ctx.fillStyle = blocksDataRef.current[key].color;
+          } else {
+            ctx.fillStyle = "#0D0B1A";
+          }
+          ctx.fillRect(screenX, screenY, blockSize, blockSize);
         }
-        ctx.fillRect(px + 1, py + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
-        ctx.strokeStyle = "#1E1A35";
-        ctx.lineWidth = 1;
-        ctx.strokeRect(px + 0.5, py + 0.5, BLOCK_SIZE - 1, BLOCK_SIZE - 1);
       }
     }
-  };
+
+    // Draw grid lines only at higher zoom levels
+    if (blockSize >= 8) {
+      ctx.strokeStyle = "#1E1A3566";
+      ctx.lineWidth = 0.5;
+      for (let col = startCol; col <= endCol; col++) {
+        const screenX = col * blockSize - panX;
+        ctx.beginPath(); ctx.moveTo(screenX, 0); ctx.lineTo(screenX, CANVAS_H); ctx.stroke();
+      }
+      for (let row = startRow; row <= endRow; row++) {
+        const screenY = row * blockSize - panY;
+        ctx.beginPath(); ctx.moveTo(0, screenY); ctx.lineTo(CANVAS_W, screenY); ctx.stroke();
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.width = CANVAS_W;
     canvas.height = CANVAS_H;
-    redrawCanvas(0, 0);
+    redrawCanvas(zoomLevel, panOffset.x, panOffset.y);
   }, []);
 
   useEffect(() => {
@@ -85,7 +119,7 @@ export default function GlobalCanvas() {
               link: block.owner_link
             };
           });
-          redrawCanvas(viewOffset.x, viewOffset.y);
+          redrawCanvas(zoomLevel, panOffset.x, panOffset.y);
         }
       } catch (err) {
         console.error('Error loading blocks:', err);
@@ -123,21 +157,64 @@ export default function GlobalCanvas() {
     return () => clearInterval(timer);
   }, []);
 
-  const getBlockFromEvent = (e) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const col = Math.floor(x / BLOCK_SIZE) + viewOffset.x;
-    const row = Math.floor(y / BLOCK_SIZE) + viewOffset.y;
+  const handleZoomIn = () => {
+    const idx = ZOOM_LEVELS.indexOf(zoomLevel);
+    if (idx < ZOOM_LEVELS.length - 1) {
+      const newZoom = ZOOM_LEVELS[idx + 1];
+      const centerX = panOffset.x + CANVAS_W / 2;
+      const centerY = panOffset.y + CANVAS_H / 2;
+      const ratio = newZoom / zoomLevel;
+      const newPanX = Math.max(0, centerX * ratio - CANVAS_W / 2);
+      const newPanY = Math.max(0, centerY * ratio - CANVAS_H / 2);
+      setZoomLevel(newZoom);
+      setPanOffset({ x: newPanX, y: newPanY });
+      redrawCanvas(newZoom, newPanX, newPanY);
+    }
+  };
+
+  const handleZoomOut = () => {
+    const idx = ZOOM_LEVELS.indexOf(zoomLevel);
+    if (idx > 0) {
+      const newZoom = ZOOM_LEVELS[idx - 1];
+      const centerX = panOffset.x + CANVAS_W / 2;
+      const centerY = panOffset.y + CANVAS_H / 2;
+      const ratio = newZoom / zoomLevel;
+      const newPanX = Math.max(0, centerX * ratio - CANVAS_W / 2);
+      const newPanY = Math.max(0, centerY * ratio - CANVAS_H / 2);
+      setZoomLevel(newZoom);
+      setPanOffset({ x: newPanX, y: newPanY });
+      redrawCanvas(newZoom, newPanX, newPanY);
+    }
+  };
+
+  const handleResetView = () => {
+    setZoomLevel(4);
+    setPanOffset({ x: 0, y: 0 });
+    redrawCanvas(4, 0, 0);
+  };
+
+  const handleWheel = (e) => {
+    e.preventDefault();
+    if (e.deltaY < 0) handleZoomIn();
+    else handleZoomOut();
+  };
+
+  const getBlockFromScreen = (screenX, screenY) => {
+    const col = Math.floor((screenX + panOffset.x) / zoomLevel);
+    const row = Math.floor((screenY + panOffset.y) / zoomLevel);
     if (col < 0 || col >= GRID_BLOCKS || row < 0 || row >= GRID_BLOCKS) return null;
     return { col, row };
   };
 
   const handleCanvasClick = (e) => {
     if (isDragging) return;
-    const block = getBlockFromEvent(e);
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = CANVAS_W / rect.width;
+    const scaleY = CANVAS_H / rect.height;
+    const screenX = (e.clientX - rect.left) * scaleX;
+    const screenY = (e.clientY - rect.top) * scaleY;
+    const block = getBlockFromScreen(screenX, screenY);
     if (!block) return;
     const key = `${block.col}_${block.row}`;
     if (blocksDataRef.current[key]) {
@@ -150,41 +227,40 @@ export default function GlobalCanvas() {
   };
 
   const handleMouseMove = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = CANVAS_W / rect.width;
+    const scaleY = CANVAS_H / rect.height;
+    const screenX = (e.clientX - rect.left) * scaleX;
+    const screenY = (e.clientY - rect.top) * scaleY;
+
     if (isDragging) {
-      const dx = Math.floor((e.clientX - dragStart.x) / BLOCK_SIZE);
-      const dy = Math.floor((e.clientY - dragStart.y) / BLOCK_SIZE);
-      if (dx !== 0 || dy !== 0) {
-        const newX = Math.max(0, Math.min(GRID_BLOCKS - VISIBLE_COLS, viewOffset.x - dx));
-        const newY = Math.max(0, Math.min(GRID_BLOCKS - VISIBLE_ROWS, viewOffset.y - dy));
-        setViewOffset({ x: newX, y: newY });
-        setDragStart({ x: e.clientX, y: e.clientY });
-        redrawCanvas(newX, newY);
-      }
+      const dx = (e.clientX - dragStart.x) * scaleX;
+      const dy = (e.clientY - dragStart.y) * scaleY;
+      const maxPanX = Math.max(0, GRID_BLOCKS * zoomLevel - CANVAS_W);
+      const maxPanY = Math.max(0, GRID_BLOCKS * zoomLevel - CANVAS_H);
+      const newPanX = Math.max(0, Math.min(maxPanX, dragPanStart.x - dx));
+      const newPanY = Math.max(0, Math.min(maxPanY, dragPanStart.y - dy));
+      setPanOffset({ x: newPanX, y: newPanY });
+      redrawCanvas(zoomLevel, newPanX, newPanY);
       return;
     }
-    const block = getBlockFromEvent(e);
+
+    const block = getBlockFromScreen(screenX, screenY);
     if (block) setHoveredBlock({ x: block.col, y: block.row });
   };
 
   const handleMouseDown = (e) => {
-    setIsDragging(false);
+    setIsDragging(true);
     setDragStart({ x: e.clientX, y: e.clientY });
+    setDragPanStart({ x: panOffset.x, y: panOffset.y });
   };
 
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  const navigate = (dir) => {
-    const step = 5;
-    let newX = viewOffset.x;
-    let newY = viewOffset.y;
-    if (dir === 'left') newX = Math.max(0, newX - step);
-    if (dir === 'right') newX = Math.min(GRID_BLOCKS - VISIBLE_COLS, newX + step);
-    if (dir === 'up') newY = Math.max(0, newY - step);
-    if (dir === 'down') newY = Math.min(GRID_BLOCKS - VISIBLE_ROWS, newY + step);
-    setViewOffset({ x: newX, y: newY });
-    redrawCanvas(newX, newY);
+  const handleMouseUp = (e) => {
+    const dx = Math.abs(e.clientX - dragStart.x);
+    const dy = Math.abs(e.clientY - dragStart.y);
+    if (dx < 5 && dy < 5) setIsDragging(false);
+    else setTimeout(() => setIsDragging(false), 50);
   };
 
   const openModal = () => {
@@ -235,13 +311,11 @@ export default function GlobalCanvas() {
         blocksDataRef.current[`${customBlock.x}_${customBlock.y}`] = {
           color: customColor, name: blockName, link: blockLink
         };
-        redrawCanvas(viewOffset.x, viewOffset.y);
+        redrawCanvas(zoomLevel, panOffset.x, panOffset.y);
         setSoldCount(c => c + 1);
         setShowCustomize(false);
         setCustomBlock(null);
-        setBlockName("");
-        setBlockLink("");
-        setCustomColor("#7C3AED");
+        setBlockName(""); setBlockLink(""); setCustomColor("#7C3AED");
         alert("Blocul tau a fost salvat permanent!");
       }
     } catch (err) {
@@ -253,6 +327,11 @@ export default function GlobalCanvas() {
 
   const remaining = TOTAL_BLOCKS - soldCount;
   const pct = ((soldCount / TOTAL_BLOCKS) * 100).toFixed(4);
+  const zoomPercent = Math.round((zoomLevel / 20) * 100);
+  const visibleCols = Math.floor(CANVAS_W / zoomLevel);
+  const visibleRows = Math.floor(CANVAS_H / zoomLevel);
+  const startCol = Math.floor(panOffset.x / zoomLevel);
+  const startRow = Math.floor(panOffset.y / zoomLevel);
 
   return (
     <div style={{ minHeight:"100vh", background:"#03010A", color:"#F0ECFF", fontFamily:"monospace" }}>
@@ -280,7 +359,7 @@ export default function GlobalCanvas() {
         <span style={{ fontWeight:700, color:"#FCA5A5", fontSize:13 }}>ONLY {remaining.toLocaleString()} BLOCKS REMAINING - {pct}% sold forever</span>
       </div>
 
-      <div style={{ maxWidth:1100, margin:"0 auto", padding:24, display:"grid", gridTemplateColumns:"1fr 260px", gap:20 }}>
+      <div style={{ maxWidth:1200, margin:"0 auto", padding:24, display:"grid", gridTemplateColumns:"1fr 260px", gap:20 }}>
         <div>
           <div style={{ display:"flex", gap:12, marginBottom:20, flexWrap:"wrap" }}>
             {[
@@ -298,48 +377,92 @@ export default function GlobalCanvas() {
           </div>
 
           <div style={{ background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:16, overflow:"hidden" }}>
-            <div style={{ padding:"12px 16px", borderBottom:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ fontWeight:700, fontSize:13 }}>🌍 Live Canvas - zona [{viewOffset.x},{viewOffset.y}] din 1000x1000</span>
-              <div style={{ display:"flex", gap:6 }}>
-                {[
-                  { label:"◀", action:() => navigate('left') },
-                  { label:"▶", action:() => navigate('right') },
-                  { label:"▲", action:() => navigate('up') },
-                  { label:"▼", action:() => navigate('down') },
-                  { label:"⛶ Full Screen", action:() => { const el=document.documentElement; if(!document.fullscreenElement){el.requestFullscreen();}else{document.exitFullscreen();} }},
-                ].map((b,i) => (
-                  <button key={i} onClick={b.action} className="btn" style={{ padding:"4px 10px", background:"transparent", border:"1px solid #1E1A35", borderRadius:4, color:"#6B6585", fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>{b.label}</button>
-                ))}
+            {/* Toolbar */}
+            <div style={{ padding:"10px 16px", borderBottom:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+              <span style={{ fontWeight:700, fontSize:12 }}>
+                🌍 GlobalCanvas — Zona [{startCol},{startRow}] | Zoom: {zoomPercent}%
+              </span>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                {/* Zoom controls */}
+                <button onClick={handleZoomOut} className="btn"
+                  style={{ padding:"4px 12px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:4, color:"#A855F7", fontSize:13, cursor:"pointer", fontWeight:700 }}>
+                  🔍−
+                </button>
+                <div style={{ padding:"4px 10px", background:"#03010A", border:"1px solid #1E1A35", borderRadius:4, color:"#A855F7", fontSize:11, display:"flex", alignItems:"center", minWidth:60, justifyContent:"center" }}>
+                  {zoomPercent}%
+                </div>
+                <button onClick={handleZoomIn} className="btn"
+                  style={{ padding:"4px 12px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:4, color:"#A855F7", fontSize:13, cursor:"pointer", fontWeight:700 }}>
+                  🔍+
+                </button>
+                <button onClick={handleResetView} className="btn"
+                  style={{ padding:"4px 10px", background:"transparent", border:"1px solid #1E1A35", borderRadius:4, color:"#6B6585", fontSize:11, cursor:"pointer" }}>
+                  Reset
+                </button>
+                <button onClick={() => { const el=document.documentElement; if(!document.fullscreenElement){el.requestFullscreen();}else{document.exitFullscreen();} }} className="btn"
+                  style={{ padding:"4px 10px", background:"transparent", border:"1px solid #1E1A35", borderRadius:4, color:"#6B6585", fontSize:11, cursor:"pointer" }}>
+                  ⛶ Full
+                </button>
               </div>
             </div>
 
+            {/* Zoom level indicator */}
+            <div style={{ padding:"4px 16px", background:"rgba(124,58,237,0.05)", borderBottom:"1px solid #1E1A35", display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:10, color:"#6B6585" }}>Zoom:</span>
+              {ZOOM_LEVELS.map((z, i) => (
+                <button key={i} onClick={() => {
+                  const ratio = z / zoomLevel;
+                  const newPanX = Math.max(0, (panOffset.x + CANVAS_W/2) * ratio - CANVAS_W/2);
+                  const newPanY = Math.max(0, (panOffset.y + CANVAS_H/2) * ratio - CANVAS_H/2);
+                  setZoomLevel(z);
+                  setPanOffset({ x: newPanX, y: newPanY });
+                  redrawCanvas(z, newPanX, newPanY);
+                }} style={{
+                  padding:"2px 8px", borderRadius:4, fontSize:10, cursor:"pointer", fontFamily:"monospace",
+                  background: zoomLevel === z ? "#7C3AED" : "transparent",
+                  border: zoomLevel === z ? "1px solid #7C3AED" : "1px solid #1E1A35",
+                  color: zoomLevel === z ? "#fff" : "#6B6585"
+                }}>
+                  {z === 1 ? "Ansamblu" : z === 2 ? "Larg" : z === 4 ? "Normal" : z === 8 ? "Detaliu" : z === 16 ? "Zoom" : "Max"}
+                </button>
+              ))}
+            </div>
+
+            {/* Hover info */}
             {hoveredBlock && (
               <div style={{ padding:"4px 16px", background:"rgba(124,58,237,0.1)", borderBottom:"1px solid #1E1A35", fontSize:11, color:"#A855F7" }}>
                 Block [{hoveredBlock.x}, {hoveredBlock.y}] {blocksDataRef.current[`${hoveredBlock.x}_${hoveredBlock.y}`] ? `- Proprietar: ${blocksDataRef.current[`${hoveredBlock.x}_${hoveredBlock.y}`].name || 'Anonim'}` : '- Disponibil - 1 EUR'}
               </div>
             )}
 
-            <div style={{ background:"#03010A", position:"relative" }}>
+            {/* Canvas */}
+            <div style={{ background:"#03010A", position:"relative", overflow:"hidden" }}>
               {loadingBlocks && (
                 <div style={{ position:"absolute", top:20, left:"50%", transform:"translateX(-50%)", background:"rgba(13,11,26,0.9)", padding:"8px 16px", borderRadius:8, border:"1px solid #1E1A35", fontSize:12, color:"#A855F7", zIndex:10 }}>
                   Se incarca blocurile...
                 </div>
               )}
               <canvas ref={canvasRef}
-                style={{ display:"block", cursor: isDragging ? "grabbing" : "crosshair", width:"100%" }}
+                style={{ display:"block", cursor:isDragging?"grabbing":"crosshair", width:"100%", maxHeight:"600px" }}
                 onClick={handleCanvasClick}
                 onMouseMove={handleMouseMove}
                 onMouseDown={handleMouseDown}
                 onMouseUp={handleMouseUp}
+                onWheel={handleWheel}
               />
             </div>
 
-            <div style={{ padding:"10px 16px", borderTop:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ fontSize:11, color:"#6B6585" }}>👆 Click bloc = cumpara | Drag = muta | Butoane sageti = navigare</span>
-              <span style={{ fontSize:11, color:"#A855F7", fontWeight:700 }}>Zona: [{viewOffset.x},{viewOffset.y}] din 1000x1000</span>
+            <div style={{ padding:"8px 16px", borderTop:"1px solid #1E1A35", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span style={{ fontSize:10, color:"#6B6585" }}>
+                👆 Click = cumpara | Drag = muta | Scroll = zoom | {visibleCols}x{visibleRows} blocuri vizibile
+              </span>
+              <span style={{ fontSize:10, color:"#A855F7", fontWeight:700 }}>
+                {soldCount} / 1,000,000 vandute
+              </span>
             </div>
           </div>
 
+          {/* Progress */}
           <div style={{ marginTop:16, background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:12, padding:16 }}>
             <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
               <span style={{ fontSize:12, fontWeight:700 }}>Canvas Completion</span>
@@ -349,13 +472,14 @@ export default function GlobalCanvas() {
               <div style={{ height:"100%", width:soldCount>0?`${pct}%`:"2px", background:"linear-gradient(90deg,#7C3AED,#A855F7,#06B6D4)", borderRadius:5, transition:"width 0.5s" }} />
             </div>
             <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
-              <span style={{ fontSize:10, color:"#6B6585" }}>0 blocks</span>
-              <span style={{ fontSize:10, color:"#F59E0B", fontWeight:600 }}>{soldCount.toLocaleString()} sold</span>
-              <span style={{ fontSize:10, color:"#6B6585" }}>1,000,000 blocks</span>
+              <span style={{ fontSize:10, color:"#6B6585" }}>0</span>
+              <span style={{ fontSize:10, color:"#F59E0B", fontWeight:600 }}>{soldCount.toLocaleString()} vandute</span>
+              <span style={{ fontSize:10, color:"#6B6585" }}>1,000,000</span>
             </div>
           </div>
         </div>
 
+        {/* SIDEBAR */}
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
           <div style={{ background:"#0D0B1A", border:"1px solid #1E1A35", borderRadius:12, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", borderBottom:"1px solid #1E1A35", display:"flex", alignItems:"center", gap:8 }}>
@@ -409,6 +533,7 @@ export default function GlobalCanvas() {
         </div>
       </div>
 
+      {/* PURCHASE MODAL */}
       {showPurchase && (
         <div style={{ position:"fixed", inset:0, background:"rgba(3,1,10,0.85)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
           onClick={e => { if(e.target===e.currentTarget && !loading) setShowPurchase(false); }}>
@@ -439,6 +564,7 @@ export default function GlobalCanvas() {
         </div>
       )}
 
+      {/* CUSTOMIZE MODAL */}
       {showCustomize && customBlock && (
         <div style={{ position:"fixed", inset:0, background:"rgba(3,1,10,0.95)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
           <div style={{ background:"#0D0B1A", border:"2px solid #10B981", borderRadius:20, padding:32, maxWidth:480, width:"100%", boxShadow:"0 0 60px rgba(16,185,129,0.3)" }}>
@@ -447,7 +573,6 @@ export default function GlobalCanvas() {
               <div style={{ fontWeight:800, fontSize:22, color:"#10B981", marginBottom:4 }}>Plata Reusita!</div>
               <div style={{ color:"#6B6585", fontSize:13 }}>Personalizeaza blocul [{customBlock.x}, {customBlock.y}]</div>
             </div>
-
             <div style={{ marginBottom:20 }}>
               <div style={{ fontSize:12, fontWeight:700, marginBottom:10, color:"#A855F7" }}>Alege Culoarea</div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
@@ -461,7 +586,6 @@ export default function GlobalCanvas() {
                 <span style={{ fontSize:12, color:"#6B6585" }}>Sau orice culoare</span>
               </div>
             </div>
-
             <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20, padding:"12px 16px", background:"#03010A", borderRadius:10 }}>
               <div style={{ width:40, height:40, background:customColor, borderRadius:6, flexShrink:0 }} />
               <div>
@@ -469,22 +593,18 @@ export default function GlobalCanvas() {
                 <div style={{ fontSize:10, color:"#6B6585" }}>Asa va arata pe canvas</div>
               </div>
             </div>
-
             <div style={{ marginBottom:16 }}>
               <div style={{ fontSize:12, fontWeight:700, marginBottom:8, color:"#A855F7" }}>Numele Tau (optional)</div>
               <input type="text" placeholder="ex: Ion Popescu" value={blockName} onChange={e => setBlockName(e.target.value)} />
             </div>
-
             <div style={{ marginBottom:24 }}>
               <div style={{ fontSize:12, fontWeight:700, marginBottom:8, color:"#A855F7" }}>Link-ul Tau (optional)</div>
               <input type="text" placeholder="ex: https://siteultau.ro" value={blockLink} onChange={e => setBlockLink(e.target.value)} />
             </div>
-
             <button className="btn" onClick={handleSaveCustomization} disabled={loading}
               style={{ width:"100%", padding:14, background:loading?"#6B6585":"linear-gradient(135deg,#10B981,#06B6D4)", border:"none", borderRadius:10, color:"#fff", fontWeight:800, fontSize:16, cursor:loading?"not-allowed":"pointer", fontFamily:"monospace" }}>
               {loading ? "Se salveaza..." : "Salveaza pe Canvas - Permanent!"}
             </button>
-
             <div style={{ display:"flex", gap:8, justifyContent:"center", marginTop:16 }}>
               <button onClick={() => window.open("https://twitter.com/intent/tweet?text=Am cumparat Blocul ["+customBlock.x+","+customBlock.y+"] pe GlobalCanvas!&url=https://www.globalcanvas.design","_blank")}
                 style={{ padding:"8px 14px", background:"rgba(124,58,237,0.2)", border:"1px solid #7C3AED", borderRadius:8, color:"#A855F7", fontSize:12, cursor:"pointer", fontWeight:600 }}>Share Twitter</button>
